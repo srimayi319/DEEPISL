@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepISL: Indian Sign Language Translation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .main-header { font-size: 3rem; color: #4B4B4B; text-align: center; font-weight: bold; }
+        .sub-header { text-align: center; color: #8A8A8A; }
+        .video-container {
+            border: 2px dashed #ccc;
+            border-radius: 12px;
+            overflow: hidden;
+            background-color: #f0f2f6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 480px;
+            position: relative;
+        }
+        .status-box {
+            background-color: #f0f2f6;
+            padding: 1rem;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .status-box .title {
+            font-weight: bold;
+            color: #4B4B4B;
+        }
+        .status-box .value {
+            font-size: 1.5rem;
+            color: #3498db;
+            font-weight: bold;
+        }
+        canvas {
+            transform: scaleX(-1); /* Flip the video horizontally */
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="text-center mb-12">
+            <h1 class="main-header">DeepISL 🤟</h1>
+            <p class="sub-header">Real-time Indian Sign Language Translation</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Main Interaction Area (Left Column) -->
+            <div class="space-y-6">
+                <div class="flex space-x-4 p-1 rounded-full bg-gray-200">
+                    <button id="isl-to-text-btn" class="flex-1 py-2 px-4 rounded-full font-bold bg-white text-gray-800 shadow-md transition-colors">ISL → Text</button>
+                    <button id="text-to-isl-btn" class="flex-1 py-2 px-4 rounded-full font-bold text-gray-600 transition-colors">Text → ISL</button>
+                </div>
+
+                <!-- ISL -> Text Section -->
+                <div id="isl-to-text-section">
+                    <h2 class="text-2xl font-semibold mb-4">Real-time Sign Detection</h2>
+                    <div class="video-container">
+                        <canvas id="live-canvas" class="w-full h-full"></canvas>
+                        <p id="video-placeholder" class="text-gray-400 absolute">Your webcam feed will appear here.</p>
+                    </div>
+                    <div class="flex space-x-4 mt-4">
+                        <button id="start-btn" class="w-full py-3 px-6 rounded-xl font-bold bg-green-500 text-white hover:bg-green-600 transition-colors">▶️ Start Signing</button>
+                        <button id="stop-btn" class="w-full py-3 px-6 rounded-xl font-bold bg-red-500 text-white hover:bg-red-600 transition-colors">⏹️ Stop Signing</button>
+                    </div>
+                </div>
+
+                <!-- Text -> ISL Section -->
+                <div id="text-to-isl-section" class="hidden">
+                    <h2 class="text-2xl font-semibold mb-4">Text to Sign Animation</h2>
+                    <textarea id="text-input" class="w-full p-4 rounded-xl border border-gray-300 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" rows="4" placeholder="e.g., what is your name"></textarea>
+                    <button id="generate-btn" class="w-full mt-4 py-3 px-6 rounded-xl font-bold bg-blue-500 text-white hover:bg-blue-600 transition-colors">✨ Generate Animation</button>
+                    <div id="animation-placeholder" class="video-container mt-4">
+                        <video id="animation-video" class="w-full h-full hidden" autoplay loop controls></video>
+                        <p id="animation-text-placeholder" class="text-gray-400 absolute">Your animation will appear here.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Output and Status Area (Right Column) -->
+            <div class="space-y-6">
+                <h2 class="text-2xl font-semibold">Output</h2>
+                <div id="status-display" class="status-box">
+                    <span class="title">STATUS</span><br>
+                    <span id="status-value" class="value">IDLE</span>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Detected Sentence</h3>
+                    <textarea id="detected-text" class="w-full p-4 rounded-xl border border-gray-300 bg-white resize-none" rows="5" readonly></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MediaPipe Libraries from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+
+    <script>
+        // --- Configuration ---
+        const N_FRAMES = 30;
+        const FRAME_SKIP = 3;
+        const MIN_CONFIDENCE = 0.70;
+        const POSE_LANDMARKS_TO_EXTRACT = {
+            11: "left_shoulder", 12: "right_shoulder",
+            13: "left_elbow", 14: "right_elbow",
+            15: "left_wrist", 16: "right_wrist"
+        };
+        const LABEL_BUFFER_SIZE = 5;
+
+        // --- DOM Elements ---
+        const islToTextBtn = document.getElementById('isl-to-text-btn');
+        const textToIslBtn = document.getElementById('text-to-isl-btn');
+        const islToTextSection = document.getElementById('isl-to-text-section');
+        const textToIslSection = document.getElementById('text-to-isl-section');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const liveCanvas = document.getElementById('live-canvas');
+        const videoPlaceholder = document.getElementById('video-placeholder');
+        const statusValue = document.getElementById('status-value');
+        const detectedText = document.getElementById('detected-text');
+        const textInput = document.getElementById('text-input');
+        const generateBtn = document.getElementById('generate-btn');
+        const animationVideo = document.getElementById('animation-video');
+        const animationTextPlaceholder = document.getElementById('animation-text-placeholder');
+        
+        const canvasCtx = liveCanvas.getContext('2d');
+        const video = document.createElement('video');
+        let capturing = false;
+        let frameCounter = 0;
+        const keypointSequence = [];
+        const labelBuffer = [];
+        let lastValidSign = { label: null, count: 0 };
+        const history = [];
+        
+        // --- MediaPipe Holistic Setup ---
+        const holistic = new Holistic({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+        });
+
+        holistic.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentationMask: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        holistic.onResults(onResults);
+        
+        // --- UI Logic ---
+        function switchMode(mode) {
+            if (mode === 'isl-to-text') {
+                islToTextSection.classList.remove('hidden');
+                textToIslSection.classList.add('hidden');
+                islToTextBtn.classList.add('bg-white', 'text-gray-800', 'shadow-md');
+                islToTextBtn.classList.remove('bg-transparent', 'text-gray-600');
+                textToIslBtn.classList.remove('bg-white', 'text-gray-800', 'shadow-md');
+                textToIslBtn.classList.add('bg-transparent', 'text-gray-600');
+            } else {
+                islToTextSection.classList.add('hidden');
+                textToIslSection.classList.remove('hidden');
+                textToIslBtn.classList.add('bg-white', 'text-gray-800', 'shadow-md');
+                textToIslBtn.classList.remove('bg-transparent', 'text-gray-600');
+                islToTextBtn.classList.remove('bg-white', 'text-gray-800', 'shadow-md');
+                islToTextBtn.classList.add('bg-transparent', 'text-gray-600');
+            }
+        }
+        
+        islToTextBtn.addEventListener('click', () => switchMode('isl-to-text'));
+        textToIslBtn.addEventListener('click', () => switchMode('text-to-isl'));
+
+        // --- ISL -> Text Logic ---
+        startBtn.addEventListener('click', () => {
+            if (capturing) return;
+            capturing = true;
+            videoPlaceholder.classList.add('hidden');
+            history.length = 0;
+            detectedText.value = '';
+            statusValue.textContent = 'STARTING...';
+            
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        liveCanvas.width = video.videoWidth;
+                        liveCanvas.height = video.videoHeight;
+                        requestAnimationFrame(processVideoFrame);
+                    };
+                })
+                .catch(err => {
+                    console.error("Error accessing webcam: ", err);
+                    statusValue.textContent = 'ERROR';
+                    alert("Could not access the webcam. Please ensure your browser has permission.");
+                });
+        });
+
+        stopBtn.addEventListener('click', () => {
+            capturing = false;
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            statusValue.textContent = 'IDLE';
+            videoPlaceholder.classList.remove('hidden');
+            canvasCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+        });
+
+        async function processVideoFrame() {
+            if (!capturing) return;
+            
+            frameCounter++;
+            if (frameCounter % FRAME_SKIP === 0) {
+                await holistic.send({ image: video });
+            }
+            
+            requestAnimationFrame(processVideoFrame);
+        }
+
+        async function onResults(results) {
+            // Draw landmarks on the canvas
+            canvasCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+            canvasCtx.drawImage(video, 0, 0, liveCanvas.width, liveCanvas.height);
+            
+            drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+            drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+            drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, { color: '#CC0000', lineWidth: 5 });
+            drawLandmarks(canvasCtx, results.leftHandLandmarks, { color: '#FF0000', lineWidth: 2 });
+            drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: '#00CC00', lineWidth: 5 });
+            drawLandmarks(canvasCtx, results.rightHandLandmarks, { color: '#FFFF00', lineWidth: 2 });
+
+            const keypoints = extractKeypoints(results);
+            keypointSequence.push(keypoints);
+            
+            // Perform prediction when sequence is full
+           if (keypointSequence.length === N_FRAMES) {
+        const sequenceToPredict = [...keypointSequence];
+        keypointSequence.length = 0;
+
+        try {
+            const response = await fetch('/api/predict_sequence', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // 👇 FIX: Add the 'history' array to the request body.
+                body: JSON.stringify({ 
+                    sequence: sequenceToPredict,
+                    history: history 
+                })
+            });
+            const result = await response.json();
+                    
+                    if (result.error) {
+                        statusValue.textContent = 'ERROR';
+                        console.error("Prediction API Error:", result.error);
+                        return;
+                    }
+
+                    const label = result.label;
+                    const confidence = result.confidence;
+                    
+                    if (confidence > MIN_CONFIDENCE) {
+                        statusValue.textContent = `${label.toUpperCase()} (${(confidence * 100).toFixed(0)}%)`;
+                        
+                        labelBuffer.push(label);
+                        if (labelBuffer.length > LABEL_BUFFER_SIZE) {
+                            labelBuffer.shift();
+                        }
+
+                        const mostCommonLabel = getMostCommon(labelBuffer);
+                        if (mostCommonLabel === lastValidSign.label) {
+                            lastValidSign.count++;
+                        } else {
+                            lastValidSign = { label: mostCommonLabel, count: 1 };
+                        }
+                        
+                        if (lastValidSign.count >= 3) {
+                            if (history.length === 0 || history[history.length - 1] !== mostCommonLabel) {
+                                history.push(mostCommonLabel);
+                                detectedText.value = history.join(" ");
+                            }
+                            lastValidSign = { label: null, count: 0 };
+                            labelBuffer.length = 0; // Reset buffer
+                        }
+                    } else {
+                        statusValue.textContent = 'DETECTING...';
+                    }
+
+                } catch (error) {
+                    console.error("Fetch Error:", error);
+                    statusValue.textContent = 'NETWORK ERROR';
+                }
+            }
+        }
+
+        function extractKeypoints(results) {
+            const extract = (landmarks, num) => {
+                if (!landmarks) return new Array(num * 3).fill(0);
+                return landmarks.map(lm => [lm.x, lm.y, lm.z]).flat();
+            };
+            
+            const poseCoords = Object.values(POSE_LANDMARKS_TO_EXTRACT)
+                .map(idx => {
+                    if (results.poseLandmarks && results.poseLandmarks[idx]) {
+                        const lm = results.poseLandmarks[idx];
+                        return [lm.x, lm.y, lm.z];
+                    }
+                    return [0, 0, 0];
+                })
+                .flat();
+            
+            const leftHandCoords = extract(results.leftHandLandmarks, 21);
+            const rightHandCoords = extract(results.rightHandLandmarks, 21);
+            
+            return [...leftHandCoords, ...rightHandCoords, ...poseCoords];
+        }
+
+        function getMostCommon(arr) {
+            const counts = {};
+            arr.forEach(item => { counts[item] = (counts[item] || 0) + 1; });
+            return Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, null);
+        }
+
+        // --- Text -> ISL Logic ---
+        generateBtn.addEventListener('click', async () => {
+            const text = textInput.value;
+            if (!text.trim()) {
+                alert("Please enter some text to generate an animation.");
+                return;
+            }
+
+            animationVideo.classList.add('hidden');
+            animationTextPlaceholder.textContent = 'Generating animation...';
+            animationTextPlaceholder.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/generate_animation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    animationVideo.src = result.video_url;
+                    // The fix is here: Wait for the video to be ready before showing it.
+                    animationVideo.oncanplay = () => {
+                        animationVideo.classList.remove('hidden');
+                        animationTextPlaceholder.classList.add('hidden');
+                    };
+                } else {
+                    animationTextPlaceholder.textContent = result.error || 'Failed to generate animation.';
+                    animationVideo.classList.add('hidden');
+                }
+            } catch (error) {
+                console.error("Fetch Error:", error);
+                animationTextPlaceholder.textContent = 'Network error. Could not connect to the server.';
+                animationVideo.classList.add('hidden');
+            }
+        });
+
+        // Placeholder functions for MediaPipe drawing utils
+        function drawConnectors(ctx, landmarks, connections, style) {
+            if (!landmarks) return;
+            ctx.strokeStyle = style.color;
+            ctx.lineWidth = style.lineWidth;
+            for (const connection of connections) {
+                const start = landmarks[connection[0]];
+                const end = landmarks[connection[1]];
+                if (start && end) {
+                    ctx.beginPath();
+                    ctx.moveTo(start.x * liveCanvas.width, start.y * liveCanvas.height);
+                    ctx.lineTo(end.x * liveCanvas.width, end.y * liveCanvas.height);
+                    ctx.stroke();
+                }
+            }
+        }
+        function drawLandmarks(ctx, landmarks, style) {
+            if (!landmarks) return;
+            ctx.fillStyle = style.color;
+            ctx.lineWidth = style.lineWidth;
+            for (const landmark of landmarks) {
+                ctx.beginPath();
+                ctx.arc(landmark.x * liveCanvas.width, landmark.y * liveCanvas.height, style.lineWidth, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        }
+        const POSE_CONNECTIONS = [[11, 12], [12, 14], [14, 16], [11, 13], [13, 15], [12, 24], [11, 23], [23, 24]];
+        const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+
+    </script>
+</body>
+</html>
