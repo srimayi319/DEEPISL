@@ -1,2 +1,8 @@
 venv/
 static/
+models\real_time_model.tflite
+models\Team35_DeepISLpaperdraft.pdf
+models\newtflite.tflite
+models\label_encoder (7).npy
+models\label_encoder.npy
+models\cnn_trans.tflite

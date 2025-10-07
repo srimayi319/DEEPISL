@@ -1,0 +1,86 @@
+body { 
+    font-family: 'Inter', sans-serif; 
+}
+
+.main-header { 
+    font-size: 3rem; 
+    color: #4B4B4B; 
+    text-align: center; 
+    font-weight: bold; 
+}
+
+.sub-header { 
+    text-align: center; 
+    color: #8A8A8A; 
+}
+
+.video-container {
+    border: 2px dashed #ccc;
+    border-radius: 12px;
+    overflow: hidden;
+    background-color: #f0f2f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 480px;
+    position: relative;
+}
+
+.status-box {
+    background-color: #f0f2f6;
+    padding: 1rem;
+    border-radius: 12px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.status-box.confident { 
+    background-color: #d4edda; 
+    color: #155724; 
+}
+
+.status-box.uncertain { 
+    background-color: #fff3cd; 
+    color: #856404; 
+}
+
+.status-box.error { 
+    background-color: #f8d7da; 
+    color: #721c24; 
+}
+
+.status-box .title { 
+    font-weight: bold; 
+}
+
+.status-box .value { 
+    font-size: 1.5rem; 
+    font-weight: bold; 
+}
+
+canvas { 
+    transform: scaleX(-1); 
+}
+
+.connection-status { 
+    position: fixed; 
+    top: 10px; 
+    right: 10px; 
+    padding: 5px 10px; 
+    border-radius: 15px; 
+    font-size: 12px; 
+}
+
+.connected { 
+    background: green; 
+    color: white; 
+}
+
+.disconnected { 
+    background: red; 
+    color: white; 
+}
+
+.hidden {
+    display: none !important;
+}
