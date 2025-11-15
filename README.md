@@ -1,4 +1,5 @@
 Purpose: Document your goals, the problems you're solving, and your progress.
+
 Content:
         Objective: "To refactor the ISL recognition pipeline to be >95% accurate, eliminate prediction flickering, and build a robust foundation for new features."
 
