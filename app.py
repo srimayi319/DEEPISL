@@ -88,7 +88,14 @@ def http_predict_sequence():
     
     try:
         data = request.get_json()
-        sequence = np.array(data.get("sequence", []), dtype=np.float32)
+        
+        # --- NEW: Catch conversion errors specifically ---
+        try:
+            sequence = np.array(data.get("sequence", []), dtype=np.float32)
+        except ValueError:
+            return jsonify({"error": "Invalid data format: Sequence must be numbers"}), 400
+        # -------------------------------------------------
+
         history_of_signs = data.get("history", [])
 
         if sequence.shape != (N_FRAMES, 144):

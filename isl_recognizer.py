@@ -21,24 +21,24 @@ class ISLRecognizer:
         self.label_buffer = deque(maxlen=5)
         
     def predict_sequence(self, sequence):
-        """
-        Predict ISL alphabet from keypoint sequence
-        Exact match to OpenCV version - NO NORMALIZATION
-        """
         try:
-            # Validate input shape (30, 144)
             if sequence.shape != (30, 144):
                 return "error", 0.0
             
-            # NO NORMALIZATION - Use raw sequence like OpenCV code
+            # --- ADDED NORMALIZATION HERE ---
+            # This MUST match exactly what you did in training
+            sequence = np.array(sequence)
+            mean = np.mean(sequence)
+            std = np.std(sequence) + 1e-8
+            sequence = (sequence - mean) / std
+            # --------------------------------
+            
             input_data = np.expand_dims(sequence, axis=0).astype(np.float32)
             
-            # Run inference
             self.interpreter.set_tensor(self.input_details[0]['index'], input_data)
             self.interpreter.invoke()
             output_data = self.interpreter.get_tensor(self.output_details[0]['index'])
             
-            # Get prediction
             pred_idx = np.argmax(output_data[0])
             confidence = float(output_data[0][pred_idx])
             label = str(self.label_classes[pred_idx])
@@ -47,8 +47,8 @@ class ISLRecognizer:
             
         except Exception as e:
             print(f"Prediction error: {e}")
-            return "error", 0.0
-    
+            return "error", 0.0 
+        
     def predict_sequence_smoothed(self, sequence):
         """
         Predict with label smoothing - same as OpenCV code
