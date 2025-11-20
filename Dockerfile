@@ -33,4 +33,5 @@ EXPOSE 5000
 
 # 8. Start the Application
 # We use Gunicorn with 100 threads to handle WebSocket connections smoothly.
+# Correct command for simple-websocket
 CMD gunicorn -w 1 --threads 100 --bind 0.0.0.0:$PORT app:app
