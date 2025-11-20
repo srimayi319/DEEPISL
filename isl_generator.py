@@ -365,7 +365,8 @@ class ISLGenerator:
         
         os.makedirs(self.data_dir, exist_ok=True)
         
-        fourcc = cv2.VideoWriter_fourcc(*'avc1') 
+        # 'mp4v' is widely supported on Linux servers without extra drivers
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
 
         for frame_data in combined_poses:
