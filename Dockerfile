@@ -6,11 +6,12 @@ FROM python:3.10-slim
 # Linux servers don't have video drivers by default. 
 # We must install 'libgl1' and 'libglib2.0' manually or the app will crash.
 # NEW (Fixed)
+# Added 'ffmpeg' to the list of installed packages
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
-
 # 3. Set the working directory inside the container
 WORKDIR /app
 

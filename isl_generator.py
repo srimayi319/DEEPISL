@@ -360,13 +360,15 @@ class ISLGenerator:
             print("No pose data collected")
             return None
 
-        final_name = f"animation_{uuid4().hex[:8]}.mp4"
+        # Use .webm extension for browser compatibility
+        final_name = f"animation_{uuid4().hex[:8]}.webm"
         final_path = os.path.join(self.data_dir, final_name)
         
         os.makedirs(self.data_dir, exist_ok=True)
         
         # 'mp4v' is widely supported on Linux servers without extra drivers
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # 'vp80' creates WebM videos which play in all browsers and work on Linux
+        fourcc = cv2.VideoWriter_fourcc(*'vp80')
         video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
 
         for frame_data in combined_poses:
