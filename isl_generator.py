@@ -41,7 +41,7 @@ class ISLGenerator:
         self.question_words = {'what', 'where', 'when', 'why', 'how', 'which', 'who', 'whom'}
         
         self.pronoun_map = {
-            'i': 'me', 'my': 'me', 'mine': 'me',
+            'i': 'me', 'my': 'me', 'mine': 'me', 'im':'me',
             'you': 'you', 'your': 'you', 'yours': 'you',
             'he': 'he', 'him': 'he', 'his': 'he',
             'she': 'she', 'her': 'she', 'hers': 'she',
