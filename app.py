@@ -11,8 +11,8 @@ MIN_CONFIDENCE = 0.65
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- FILE PATHS ---
-MODEL_PATH = os.path.join(ROOT_DIR, "models", "realtime.tflite")
-CLASS_NAMES_PATH = os.path.join(ROOT_DIR, "models", "label_encoder.npy")
+MODEL_PATH = os.path.join(ROOT_DIR, "models", "model_final.tflite")
+CLASS_NAMES_PATH = os.path.join(ROOT_DIR, "models", "label_encoder_final.npy")
 GLOSS_MAP_PATH = os.path.join(ROOT_DIR, "gloss_map.json")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 
