@@ -24,8 +24,9 @@ OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 app = Flask(
     __name__, 
     static_folder=os.path.join(ROOT_DIR, 'static'),
-    template_folder=ROOT_DIR
+    template_folder=os.path.join(ROOT_DIR, 'template')
 )
+
 
 # Force correct MIME types for video playback
 mimetypes.add_type('video/mp4', '.mp4')
@@ -73,7 +74,7 @@ initialize_models()
 
 @app.route("/")
 def index():
-    return render_template("template/index.html")
+    return render_template("index.html")
 
 @app.route('/js/<path:filename>')
 def serve_js(filename):
