@@ -332,69 +332,66 @@ class ISLGenerator:
     # UPDATED GENERATION LOGIC
     # ==========================================
     def generate_video_from_text(self, text: str) -> str:
-        """Generate video from text using ISL grammar processing with LABELS."""
-        tokens = self.text_to_gloss(text)
-        
-        if not tokens:
-            print("No tokens generated from text")
-            return None
-
-        # CHANGE: Instead of a flat list of frames, we create a list of segments
-        # Each segment has: (Label, ListOfFrames)
-        video_segments = []
-        
-        for token in tokens:
-            json_path = self.gloss_map.get(token.lower(), None) 
+    
+        try:
+            tokens = self.text_to_gloss(text)
             
-            if json_path and os.path.exists(json_path):
-                try:
-                    with open(json_path, 'r') as f:
-                        sign_data = json.load(f)
-                        # Store (Label, Frames) together
-                        video_segments.append( (token.upper(), sign_data) )
-                except json.JSONDecodeError:
-                    print(f"Error: Invalid JSON in {json_path}")
-            else:
-                print(f"Warning: No data for token: '{token}'")
+            if not tokens:
+                print("No tokens generated from text")
+                return None
 
-        if not video_segments:
-            print("No pose data collected")
-            return None
+            # Each segment: (Label, Frames)
+            video_segments = []
+            
+            for token in tokens:
+                json_path = self.gloss_map.get(token.lower(), None) 
+                
+                if json_path and os.path.exists(json_path):
+                    try:
+                        with open(json_path, 'r') as f:
+                            sign_data = json.load(f)
+                            video_segments.append((token.upper(), sign_data))
+                    except json.JSONDecodeError:
+                        print(f"Error: Invalid JSON in {json_path}")
+                else:
+                    print(f"Warning: No data for token: '{token}'")
 
-        os.makedirs(self.data_dir, exist_ok=True)
-        final_name = f"animation_{uuid4().hex[:8]}.mp4"
-        final_path = os.path.join(self.data_dir, final_name)
-        
-        # ✅ CLOUD-SAFE VIDEO ENCODER (Render compatible)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
+            if not video_segments:
+                print("No pose data collected")
+                return None
 
-        if not video_out.isOpened():
-            print("mp4v failed, trying XVID + AVI fallback...")
-            final_path = final_path.replace(".mp4", ".avi")
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            os.makedirs(self.data_dir, exist_ok=True)
+            final_name = f"animation_{uuid4().hex[:8]}.mp4"
+            final_path = os.path.join(self.data_dir, final_name)
+
+            # ✅ CLOUD-SAFE VIDEO ENCODER
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
 
-        if not video_out.isOpened():
-            raise RuntimeError("❌ No supported video encoder found on this system.")
+            if not video_out.isOpened():
+                print("mp4v failed, trying XVID + AVI fallback...")
+                final_path = final_path.replace(".mp4", ".avi")
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
 
-            # CHANGE: Loop through segments instead of flat frames
+            if not video_out.isOpened():
+                raise RuntimeError("❌ No supported video encoder found on this system.")
+
+            # ✅ MAIN GENERATION LOOP
             for label, frames in video_segments:
                 for frame_data in frames:
                     canvas = np.full((self.img_size[1], self.img_size[0], 3), 255, dtype=np.uint8)
                     canvas[:] = BG_COLOR
                     
-                    # Draw skeleton
                     self._draw_skeleton_on_frame(canvas, frame_data)
-                    
-                    # NEW: Draw the label (Subtitle) on top
                     self._draw_label(canvas, label)
                     
                     video_out.write(canvas)
-            
+
             video_out.release()
             print(f"Video saved at: {final_path}")
             return final_path
+
         except Exception as e:
             print(f"Error generating video: {e}")
             return None
