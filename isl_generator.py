@@ -9,11 +9,9 @@ import spacy
 import re
 
 # Load spaCy English model
-# FIX 1: Load with disable=["parser", "ner"] to prevent unwanted splits
-# FIX 2: Added explicit string replacement BEFORE spaCy runs
 try:
     nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
-    print("spaCy model loaded successfully with disable=parser,ner")
+    print("spaCy model loaded successfully")
 except OSError:
     print("Downloading spaCy English model...")
     from spacy.cli import download
@@ -24,8 +22,8 @@ except OSError:
 mp_face_mesh = mp.solutions.face_mesh
 
 # Constants
-BG_COLOR = (255, 255, 255) # White background
-TEXT_COLOR = (0, 0, 0)       # Black text
+BG_COLOR = (255, 255, 255)
+TEXT_COLOR = (0, 0, 0)
 SKELETON_COLOR = (171, 134, 46)
 HAND_COLOR = (111, 107, 229)
 JOINT_COLOR = (79, 199, 249)
@@ -92,92 +90,58 @@ class ISLGenerator:
         return word.lower() in colors
 
     def _preprocess_contractions(self, text):
-        """
-        Replaces common contractions so spaCy doesn't split them weirdly.
-        This prevents 'I'm' from becoming 'I' + "'" + 'm'.
-        """
+        """Replaces common contractions so spaCy doesn't split them weirdly."""
         text = text.lower()
-        # Define replacements
         replacements = {
-            "i'm": "i am",
-            "im": "i am",
-            "you're": "you are",
-            "we're": "we are",
-            "they're": "they are",
-            "he's": "he is",
-            "she's": "she is",
-            "it's": "it is"
+            "i'm": "i am", "im": "i am", "you're": "you are",
+            "we're": "we are", "they're": "they are", "he's": "he is",
+            "she's": "she is", "it's": "it is"
         }
-        
-        # Regex to match word boundaries so we don't replace "m" inside "me"
         for contraction, replacement in replacements.items():
-            # Pattern: r"\b" + re.escape(contraction) + r"\b"
-            # Replaces " i'm " with " i am "
             pattern = re.compile(r"\b" + re.escape(contraction) + r"\b")
             text = pattern.sub(" " + replacement + " ", text)
-        
         return text.strip()
 
     def _spacy_pos_tagging(self, sentence):
         """Use spaCy for POS tagging."""
         doc = nlp(sentence.lower())
-        tokens = []
-        tags = []
-        
+        tokens, tags = [], []
         for token in doc:
-            # FIX: Filter out punctuation and artifacts to prevent 'm' token
-            if not token.is_alpha:
-                continue
+            if not token.is_alpha: continue
             tokens.append(token.text)
             tags.append(token.pos_)
-        
         return tokens, tags
 
     def apply_isl_grammar(self, sentence):
         """Apply ISL grammar rules."""
-        if not sentence or not sentence.strip():
-            return []
+        if not sentence or not sentence.strip(): return []
         
         tokens, tags = self._spacy_pos_tagging(sentence)
         subjects, objects, verbs, adjectives, colors, negations, questions, others = [], [], [], [], [], [], [], []
         
         for i, (word, pos_tag) in enumerate(zip(tokens, tags)):
-            if word in self.auxiliary_verbs:
-                continue
-            
-            if word in self.question_words:
-                questions.append(word)
-            elif word in ['not', 'no', 'never', 'nothing']:
-                negations.append(word)
-            elif self._is_color_word(word):
-                colors.append(word)
+            if word in self.auxiliary_verbs: continue
+            if word in self.question_words: questions.append(word)
+            elif word in ['not', 'no', 'never', 'nothing']: negations.append(word)
+            elif self._is_color_word(word): colors.append(word)
             elif pos_tag == 'PRON' or (pos_tag == 'NOUN' and not subjects and not objects):
                 subjects.append(self.pronoun_map.get(word, word))
-            elif pos_tag == 'NOUN':
-                objects.append(word)
-            elif pos_tag == 'VERB':
-                verbs.append(word)
-            elif pos_tag == 'ADJ':
-                adjectives.append(word)
-            else:
-                others.append(word)
+            elif pos_tag == 'NOUN': objects.append(word)
+            elif pos_tag == 'VERB': verbs.append(word)
+            elif pos_tag == 'ADJ': adjectives.append(word)
+            else: others.append(word)
 
-        # ISL Word Order: Subject + Object + Verb + Adjectives + Others + Colors + Negation + Questions
-        result = subjects + objects + verbs + adjectives + others + colors + negations + questions
-        return result
+        # ISL Order: Subject + Object + Verb + Adjectives + Others + Colors + Negation + Questions
+        return subjects + objects + verbs + adjectives + others + colors + negations + questions
 
     def _text_to_gloss_sequence(self, tokens):
-        """Convert a list of processed English tokens to ISL glosses."""
-        if not tokens:
-            return []
-
+        if not tokens: return []
         glosses = []
         i = 0
         while i < len(tokens):
             current_node = self.phrase_trie
             longest_match_len = 0
             longest_match_gloss = None
-
             for j in range(i, len(tokens)):
                 word = tokens[j]
                 if word in current_node:
@@ -187,7 +151,6 @@ class ISLGenerator:
                         longest_match_gloss = current_node['__END__']
                 else:
                     break
-
             if longest_match_gloss:
                 glosses.append(longest_match_gloss)
                 i += longest_match_len
@@ -205,42 +168,32 @@ class ISLGenerator:
         return glosses
 
     def text_to_gloss(self, sentence):
-        # FIX 3: Preprocess text before any processing
         sentence = self._preprocess_contractions(sentence)
-        
         common_phrases = {
             'good morning': 2, 'good afternoon': 2, 
             'good evening': 2, 'good night': 2,
             'thank you': 2, 'hello': 1
         }
-        
         initial_glosses = []
         remaining_sentence = sentence
-        
         for phrase, length in common_phrases.items():
             if sentence.startswith(phrase):
                 if phrase in self.gloss_map:
                     initial_glosses.append(phrase) 
                     remaining_sentence = sentence[len(phrase):].strip()
                     break
-
         if remaining_sentence:
             remaining_tokens = [token.text for token in nlp(remaining_sentence) if token.is_alpha]
             processed_remaining_tokens = self.apply_isl_grammar(" ".join(remaining_tokens))
             remaining_glosses = self._text_to_gloss_sequence(processed_remaining_tokens)
         else:
             remaining_glosses = []
-            
-        final_gloss_sequence = initial_glosses + remaining_glosses
-        return final_gloss_sequence
+        return initial_glosses + remaining_glosses
 
     def _draw_skeleton_on_frame(self, canvas, frame_data):
-        if not frame_data:
-            return
-
+        if not frame_data: return
         def get_point_coords(point):
             return (int(point['x'] * self.img_size[0]), int(point['y'] * self.img_size[1]))
-
         def fill_torso(pose_points):
             if not pose_points or len(pose_points) < 25: return
             required_indices = [11, 12, 23, 24]
@@ -248,7 +201,6 @@ class ISLGenerator:
                 pts = [pose_points[11], pose_points[12], pose_points[24], pose_points[23]]
                 pts_array = np.array([[int(p['x']*self.img_size[0]), int(p['y']*self.img_size[1])] for p in pts], np.int32)
                 cv2.fillPoly(canvas, [pts_array], (200, 150, 100))
-
         def draw_smiling_face(face_points):
             if not face_points:
                 center_x, center_y = self.img_size[0] // 2, self.img_size[1] // 3
@@ -262,11 +214,9 @@ class ISLGenerator:
                 mouth_y = center_y + 10
                 cv2.ellipse(canvas, (center_x, mouth_y), (20, 15), 0, 0, 180, (0, 0, 0), 3)
                 return
-            
             xs = [p['x'] for p in face_points if 'x' in p]
             ys = [p['y'] for p in face_points if 'y' in p]
             if not xs or not ys: return
-            
             center_x = int(np.mean(xs) * self.img_size[0])
             center_y = int(np.mean(ys) * self.img_size[1])
             head_radius = 40
@@ -278,7 +228,6 @@ class ISLGenerator:
             cv2.circle(canvas, (center_x + eye_offset, eye_y), 5, (0, 0, 0), -1)
             mouth_y = center_y + 10
             cv2.ellipse(canvas, (center_x, mouth_y), (20, 15), 0, 0, 180, (0, 0, 0), 3)
-
         def draw_connections(points, connections, color, thickness=3):
             if not points: return
             for start_idx, end_idx in connections:
@@ -288,64 +237,44 @@ class ISLGenerator:
                     'x' in points[end_idx] and 'y' in points[end_idx]):
                     cv2.line(canvas, get_point_coords(points[start_idx]),
                              get_point_coords(points[end_idx]), color, thickness, cv2.LINE_AA)
-
         def draw_points(points, color, size=4):
             if not points: return
             for point in points:
                 if point and 'x' in point and 'y' in point:
                     cv2.circle(canvas, get_point_coords(point), size, color, -1, cv2.LINE_AA)
-
         HAND_CONNECTIONS = [
             (0,1),(1,2),(2,3),(3,4),(0,5),(5,6),(6,7),(7,8),
             (0,9),(9,10),(10,11),(11,12),(0,13),(13,14),(14,15),(15,16),
             (0,17),(17,18),(18,19),(19,20),(5,9),(9,13),(13,17)
         ]
         POSE_CONNECTIONS = [(11,12),(12,14),(14,16),(11,13),(13,15),(12,24),(11,23),(23,24)]
-
         pose_data = frame_data.get("pose", [])
         left_hand_data = frame_data.get("left_hand", [])
         right_hand_data = frame_data.get("right_hand", [])
-
         fill_torso(pose_data)
         draw_smiling_face(frame_data.get("face", []))
-
         draw_connections(pose_data, POSE_CONNECTIONS, SKELETON_COLOR, thickness=3)
         draw_connections(left_hand_data, HAND_CONNECTIONS, HAND_COLOR, thickness=2)
         draw_connections(right_hand_data, HAND_CONNECTIONS, HAND_COLOR, thickness=2)
 
-    # ==========================================
-    # NEW METHOD: Draw Text Label (Subtitle)
-    # ==========================================
     def _draw_label(self, canvas, text):
-        """Draws a text label at: top left of the frame"""
         if not text: return
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 1.0
         thickness = 3
-        color = TEXT_COLOR # Black
-        org = (30, 50) # Top Left position
-
-        # Draw Text
+        color = TEXT_COLOR
+        org = (30, 50)
         cv2.putText(canvas, text.upper(), org, font, font_scale, color, thickness, cv2.LINE_AA)
     
-    # ==========================================
-    # UPDATED GENERATION LOGIC
-    # ==========================================
     def generate_video_from_text(self, text: str) -> str:
-    
         try:
             tokens = self.text_to_gloss(text)
-            
             if not tokens:
                 print("No tokens generated from text")
                 return None
-
-            # Each segment: (Label, Frames)
             video_segments = []
-            
             for token in tokens:
                 json_path = self.gloss_map.get(token.lower(), None) 
-                
                 if json_path and os.path.exists(json_path):
                     try:
                         with open(json_path, 'r') as f:
@@ -355,21 +284,18 @@ class ISLGenerator:
                         print(f"Error: Invalid JSON in {json_path}")
                 else:
                     print(f"Warning: No data for token: '{token}'")
-
             if not video_segments:
                 print("No pose data collected")
                 return None
-
             os.makedirs(self.data_dir, exist_ok=True)
             final_name = f"animation_{uuid4().hex[:8]}.mp4"
             final_path = os.path.join(self.data_dir, final_name)
 
-            # ✅ CLOUD-SAFE VIDEO ENCODER
+            # Encoder setup
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
-
             if not video_out.isOpened():
-                print("mp4v failed, trying XVID + AVI fallback...")
+                print("mp4v failed, trying XVID...")
                 final_path = final_path.replace(".mp4", ".avi")
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
                 video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
@@ -377,21 +303,30 @@ class ISLGenerator:
             if not video_out.isOpened():
                 raise RuntimeError("❌ No supported video encoder found on this system.")
 
-            # ✅ MAIN GENERATION LOOP
             for label, frames in video_segments:
                 for frame_data in frames:
                     canvas = np.full((self.img_size[1], self.img_size[0], 3), 255, dtype=np.uint8)
                     canvas[:] = BG_COLOR
-                    
                     self._draw_skeleton_on_frame(canvas, frame_data)
                     self._draw_label(canvas, label)
-                    
                     video_out.write(canvas)
 
             video_out.release()
             print(f"Video saved at: {final_path}")
+
+            # --- CRITICAL RENDER FIX ---
+            # Force the file to be readable by the web server (Permissions 644)
+            try:
+                os.chmod(final_path, 0o644)
+                print(f"✅ Permissions set for {final_name}")
+            except Exception as e:
+                print(f"⚠️ Could not set permissions: {e}")
+            # -------------------------
+
             return final_path
 
         except Exception as e:
             print(f"Error generating video: {e}")
+            import traceback
+            traceback.print_exc()
             return None

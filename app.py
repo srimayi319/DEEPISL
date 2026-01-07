@@ -10,7 +10,6 @@ N_FRAMES = 30
 MIN_CONFIDENCE = 0.65
 
 # --- ROOT DIRECTORY SETUP ---
-# This is the most important line for Render/Cloud deployments
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- FILE PATHS ---
@@ -20,7 +19,8 @@ GLOSS_MAP_PATH = os.path.join(ROOT_DIR, "gloss_map.json")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 
 # --- FLASK SETUP ---
-# Explicitly set static and template folders to absolute paths
+# NOTE: I kept template_folder=ROOT_DIR and the path "template/index.html" 
+# as per your code structure.
 app = Flask(
     __name__, 
     static_folder=os.path.join(ROOT_DIR, 'static'),
@@ -42,41 +42,29 @@ user_sessions = {}
 def initialize_models():
     global recognizer, generator
     
-    # 1. Initialize Recognizer
     try:
         print("="*50)
         print("Initializing ISL Recognizer...")
-        print(f"Model Path: {MODEL_PATH}")
-        print(f"Labels Path: {CLASS_NAMES_PATH}")
-        
         from isl_recognizer import ISLRecognizer
         recognizer = ISLRecognizer(MODEL_PATH, CLASS_NAMES_PATH)
         print("✅ ISL Recognizer initialized")
-    except ImportError as e:
+    except Exception as e:
         print(f"❌ ERROR loading Recognizer: {e}")
         recognizer = None
-    except Exception as e:
-        print(f"❌ CRITICAL ERROR loading Recognizer: {e}")
-        recognizer = None
     
-    # 2. Initialize Generator
     try:
         print("Initializing ISL Generator...")
         from isl_generator import ISLGenerator
-        # Ensure the output directory exists
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         generator = ISLGenerator(GLOSS_MAP_PATH, OUTPUT_DIR)
         print("✅ ISL Generator initialized")
-        
     except Exception as e:
         print(f"⚠️  ERROR loading Generator: {e}")
         generator = None
 
-    # CRITICAL FIX: Stop server if recognizer fails
     if recognizer is None:
         print("!!! SERVER HALTED !!!")
         print("ISL Recognizer failed to load.")
-        print("Server will NOT start.")
         sys.exit(1)
 
 initialize_models()
@@ -95,14 +83,44 @@ def serve_js(filename):
 def serve_css(filename):
     return send_from_directory(os.path.join(ROOT_DIR, 'css'), filename)
 
-# Explicit route to serve animations with correct headers
 @app.route('/static/animations/<path:filename>')
 def serve_animations(filename):
-    try:
-        return send_from_directory(OUTPUT_DIR, filename)
-    except FileNotFoundError:
-        print(f"❌ Animation file not found: {filename}")
-        return "File not found", 404
+    """
+    Serves animation files.
+    Includes forensic logging to debug path mismatches on Render.
+    """
+    target_path = os.path.join(OUTPUT_DIR, filename)
+    
+    # --- DIAGNOSTIC LOGS ---
+    print(f"🔍 [VIDEO REQUEST] Attempting to serve: {filename}")
+    print(f"🔍 [VIDEO REQUEST] Absolute path constructed: {target_path}")
+    print(f"🔍 [VIDEO REQUEST] File exists on disk? {os.path.exists(target_path)}")
+    # -----------------------
+
+    if os.path.exists(target_path):
+        try:
+            return send_from_directory(OUTPUT_DIR, filename)
+        except Exception as e:
+            print(f"❌ [VIDEO ERROR] Permission or I/O error: {e}")
+            return f"Server error reading file: {e}", 500
+
+    else:
+        # --- CRITICAL DEBUGGING ---
+        print(f"⚠️ [VIDEO 404] File not found! Listing contents of {OUTPUT_DIR}:")
+        try:
+            files = os.listdir(OUTPUT_DIR)
+            if not files:
+                print("   (Folder is completely empty!)")
+            else:
+                for f in files:
+                    print(f"   - {f}")
+        except FileNotFoundError:
+            print(f"   ERROR: The directory {OUTPUT_DIR} does not even exist!")
+        except Exception as e:
+            print(f"   ERROR: Could not list directory: {e}")
+        # -------------------------
+
+        return "Animation file not found. Check server logs for details.", 404
 
 @app.route("/api/predict_sequence", methods=["POST"])
 def http_predict_sequence():
@@ -135,7 +153,6 @@ def http_predict_sequence():
 
 @app.route("/api/generate_animation", methods=["POST"])
 def http_generate_animation():
-    """HTTP endpoint for Text → ISL animation generation"""
     if generator is None:
         return jsonify({"error": "Animation generator not available"}), 500
     
@@ -149,11 +166,9 @@ def http_generate_animation():
         video_path = generator.generate_video_from_text(text)
         
         if video_path and os.path.exists(video_path):
-            # FIX: Create URL directly based on filename to avoid relative path issues
             filename = os.path.basename(video_path)
             video_url = f"/static/animations/{filename}"
             
-            # Debug logging
             print(f"Video saved at: {video_path}")
             print(f"Returning URL: {video_url}")
             
@@ -223,7 +238,6 @@ def handle_prediction(data):
 
 @socketio.on('generate_animation')
 def handle_generate_animation(data):
-    """WebSocket: Text → ISL animation generation"""
     if generator is None:
         emit('animation_error', {'error': 'Animation generator not available'})
         return
@@ -271,7 +285,6 @@ def handle_clear_history():
 
 @socketio.on('clear_prediction_buffer')
 def handle_clear_prediction_buffer():
-    """Clears the smoothing buffer when transitioning to a new sign"""
     if recognizer:
         recognizer.clear_buffer()
 
