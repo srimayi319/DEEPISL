@@ -24,7 +24,7 @@ OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 app = Flask(
     __name__, 
     static_folder=os.path.join(ROOT_DIR, 'static'),
-    template_folder=os.path.join(ROOT_DIR, 'template')
+    template_folder=os.path.join(ROOT_DIR, 'templates')
 )
 
 
