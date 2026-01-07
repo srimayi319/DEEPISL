@@ -200,10 +200,15 @@ class ISLGenerator:
         return final_gloss_sequence
 
     def _draw_skeleton_on_frame(self, canvas, frame_data):
-        if not frame_data: return
+        """Draws the skeleton, face, and hands on the canvas."""
+        if not frame_data:
+            return
 
         def get_point_coords(point):
-            return (int(point['x'] * self.img_size[0]), int(point['y'] * self.img_size[1]))
+            # Safely retrieve coordinates
+            if 'x' in point and 'y' in point:
+                return (int(point['x'] * self.img_size[0]), int(point['y'] * self.img_size[1]))
+            return None
 
         def fill_torso(pose_points):
             if not pose_points or len(pose_points) < 25: return
@@ -214,6 +219,7 @@ class ISLGenerator:
                 cv2.fillPoly(canvas, [pts_array], (200, 150, 100))
 
         def draw_smiling_face(face_points):
+            # If face points are missing, draw a default smiley face in the center
             if not face_points:
                 center_x, center_y = self.img_size[0] // 2, self.img_size[1] // 3
                 head_radius = 40
@@ -245,12 +251,15 @@ class ISLGenerator:
         def draw_connections(points, connections, color, thickness=3):
             if not points: return
             for start_idx, end_idx in connections:
+                # Check bounds and existence
                 if (len(points) > max(start_idx, end_idx) and 
-                    points[start_idx] and points[end_idx] and
-                    'x' in points[start_idx] and 'y' in points[start_idx] and
-                    'x' in points[end_idx] and 'y' in points[end_idx]):
-                    cv2.line(canvas, get_point_coords(points[start_idx]),
-                             get_point_coords(points[end_idx]), color, thickness, cv2.LINE_AA)
+                    points[start_idx] and points[end_idx]):
+                    
+                    start_pos = get_point_coords(points[start_idx])
+                    end_pos = get_point_coords(points[end_idx])
+                    
+                    if start_pos and end_pos:
+                        cv2.line(canvas, start_pos, end_pos, color, thickness, cv2.LINE_AA)
 
         HAND_CONNECTIONS = [
             (0,1),(1,2),(2,3),(3,4),(0,5),(5,6),(6,7),(7,8),
@@ -275,10 +284,10 @@ class ISLGenerator:
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 1.0
         thickness = 3
-        color = TEXT_COLOR 
+        color = (0, 0, 0) # Black text
         org = (30, 50) 
         cv2.putText(canvas, text.upper(), org, font, font_scale, color, thickness, cv2.LINE_AA)
-    
+
     def generate_video_from_text(self, text: str) -> str:
         """Generate video from text using ISL grammar processing with LABELS."""
         tokens = self.text_to_gloss(text)
@@ -287,8 +296,7 @@ class ISLGenerator:
             print("⚠️  No tokens generated from text")
             return None
 
-        # CHANGE: Instead of a flat list of frames, we create a list of segments
-        # Each segment has: (Label, ListOfFrames)
+        # Create a list of (Label, ListOfFrames) segments
         video_segments = []
         
         for token in tokens:
@@ -299,58 +307,70 @@ class ISLGenerator:
                     with open(json_path, 'r') as f:
                         raw_data = json.load(f)
                         
-                        # --- FIX: Robust Data Loading ---
-                        # Handle if data is just a list of frames, or if it's wrapped in a 'frames' key
+                        # --- Robust Data Loading ---
+                        sign_data = []
                         if isinstance(raw_data, list):
                             sign_data = raw_data
                         elif isinstance(raw_data, dict) and 'frames' in raw_data:
                             sign_data = raw_data['frames']
+                        
+                        # Only add if we found valid frame data
+                        if sign_data:
+                            video_segments.append( (token.upper(), sign_data) )
+                            print(f"  -> Loaded {len(sign_data)} frames for '{token}'")
                         else:
-                            print(f"⚠️  Warning: Unexpected JSON format for {token}")
-                            sign_data = []
+                            print(f"  ⚠️  No frames found in JSON for '{token}'")
 
-                        # Store (Label, Frames) together
-                        video_segments.append( (token.upper(), sign_data) )
                 except json.JSONDecodeError:
                     print(f"❌ Error: Invalid JSON in {json_path}")
+                except Exception as e:
+                    print(f"❌ Error reading {json_path}: {e}")
             else:
-                print(f"⚠️  Warning: No data for token: '{token}'")
+                print(f"⚠️  Warning: No data file found for token: '{token}'")
 
         if not video_segments:
-            print("⚠️  No pose data collected")
+            print("⚠️  No pose data collected to generate video")
             return None
 
         os.makedirs(self.data_dir, exist_ok=True)
         final_name = f"animation_{uuid4().hex[:8]}.mp4"
         final_path = os.path.join(self.data_dir, final_name)
         
-        # Use H264 codec
-        fourcc = cv2.VideoWriter_fourcc(*'H264')
+        # --- CODEC SELECTION ---
+        # 'mp4v' (Motion JPEG) is the most compatible codec across Windows, Mac, and Linux.
+        # 'avc1' (H264) often requires specific FFmpeg installations or builds of OpenCV.
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         
         try:
             video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
+            
             if not video_out.isOpened():
-                # Fallback if H.264 is not supported by your OpenCV build
-                fourcc_fallback = cv2.VideoWriter_fourcc(*'mp4v')
+                print("❌ Failed to open VideoWriter with mp4v. Trying fallback...")
+                fourcc_fallback = cv2.VideoWriter_fourcc(*'XVID')
                 video_out = cv2.VideoWriter(final_path, fourcc_fallback, self.fps, self.img_size)
 
-            # CHANGE: Loop through segments instead of flat frames
+            # Loop through segments
             for label, frames in video_segments:
                 for frame_data in frames:
+                    # Create a fresh white canvas for every frame
                     canvas = np.full((self.img_size[1], self.img_size[0], 3), 255, dtype=np.uint8)
                     canvas[:] = BG_COLOR
                     
-                    # Draw skeleton
-                    self._draw_skeleton_on_frame(canvas, frame_data)
+                    # Draw skeleton (with safety checks)
+                    try:
+                        self._draw_skeleton_on_frame(canvas, frame_data)
+                    except Exception as e:
+                        print(f"Error drawing frame for {label}: {e}")
                     
-                    # NEW: Draw the label (Subtitle) on top
+                    # Draw Label
                     self._draw_label(canvas, label)
                     
                     video_out.write(canvas)
             
             video_out.release()
-            print(f"✅ Video saved at: {final_path}")
+            print(f"✅ Video successfully saved at: {final_path}")
             return final_path
+            
         except Exception as e:
-            print(f"❌ Error generating video: {e}")
+            print(f"❌ Fatal Error generating video: {e}")
             return None
