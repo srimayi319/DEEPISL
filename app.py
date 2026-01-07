@@ -1,14 +1,16 @@
 import os
 import sys
-import time
+import mimetypes
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 import numpy as np
-import uuid
 
 # --- CONFIGURATION ---
 N_FRAMES = 30
 MIN_CONFIDENCE = 0.65
+
+# --- ROOT DIRECTORY SETUP ---
+# This is the most important line for Render/Cloud deployments
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- FILE PATHS ---
@@ -18,7 +20,16 @@ GLOSS_MAP_PATH = os.path.join(ROOT_DIR, "gloss_map.json")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 
 # --- FLASK SETUP ---
-app = Flask(__name__)
+# Explicitly set static and template folders to absolute paths
+app = Flask(
+    __name__, 
+    static_folder=os.path.join(ROOT_DIR, 'static'),
+    template_folder=ROOT_DIR
+)
+
+# Force correct MIME types for video playback
+mimetypes.add_type('video/mp4', '.mp4')
+
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins="*")
 
@@ -31,20 +42,18 @@ user_sessions = {}
 def initialize_models():
     global recognizer, generator
     
-    # 1. Initialize Recognizer (Standard TF Version)
+    # 1. Initialize Recognizer
     try:
         print("="*50)
-        print("Initializing ISL Recognizer (Standard TensorFlow)...")
+        print("Initializing ISL Recognizer...")
         print(f"Model Path: {MODEL_PATH}")
         print(f"Labels Path: {CLASS_NAMES_PATH}")
         
         from isl_recognizer import ISLRecognizer
         recognizer = ISLRecognizer(MODEL_PATH, CLASS_NAMES_PATH)
-        print("✅ ISL Recognizer initialized (Standard TensorFlow)")
+        print("✅ ISL Recognizer initialized")
     except ImportError as e:
         print(f"❌ ERROR loading Recognizer: {e}")
-        print("Standard TensorFlow library might be missing.")
-        print("Please run: pip install tensorflow")
         recognizer = None
     except Exception as e:
         print(f"❌ CRITICAL ERROR loading Recognizer: {e}")
@@ -54,46 +63,51 @@ def initialize_models():
     try:
         print("Initializing ISL Generator...")
         from isl_generator import ISLGenerator
+        # Ensure the output directory exists
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         generator = ISLGenerator(GLOSS_MAP_PATH, OUTPUT_DIR)
         print("✅ ISL Generator initialized")
         
     except Exception as e:
         print(f"⚠️  ERROR loading Generator: {e}")
-        print("Recognition might work, but Text-to-ISL will fail.")
         generator = None
 
     # CRITICAL FIX: Stop server if recognizer fails
     if recognizer is None:
         print("!!! SERVER HALTED !!!")
         print("ISL Recognizer failed to load.")
-        print("Please install 'tensorflow' to fix errors.")
         print("Server will NOT start.")
-        sys.exit(1) # Force stop to avoid infinite errors
+        sys.exit(1)
 
 initialize_models()
 
 # --- ROUTES ---
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
 @app.route('/js/<path:filename>')
 def serve_js(filename):
-    return send_from_directory('js', filename)
+    return send_from_directory(os.path.join(ROOT_DIR, 'js'), filename)
 
 @app.route('/css/<path:filename>')
 def serve_css(filename):
-    return send_from_directory('css', filename)
+    return send_from_directory(os.path.join(ROOT_DIR, 'css'), filename)
 
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('static', filename)
+# Explicit route to serve animations with correct headers
+@app.route('/static/animations/<path:filename>')
+def serve_animations(filename):
+    try:
+        return send_from_directory(OUTPUT_DIR, filename)
+    except FileNotFoundError:
+        print(f"❌ Animation file not found: {filename}")
+        return "File not found", 404
 
 @app.route("/api/predict_sequence", methods=["POST"])
 def http_predict_sequence():
     if not recognizer:
-        return jsonify({"error": "Recognizer not initialized (Standard TF). Install tensorflow."}), 503
+        return jsonify({"error": "Recognizer not initialized"}), 503
     
     try:
         data = request.get_json()
@@ -131,21 +145,31 @@ def http_generate_animation():
         return jsonify({"error": "No text provided"}), 400
     
     try:
+        print(f"Generating animation for text: {text}")
         video_path = generator.generate_video_from_text(text)
+        
         if video_path and os.path.exists(video_path):
-            # Create relative URL for the generated animation
-            relative_url = os.path.relpath(video_path, start=ROOT_DIR)
+            # FIX: Create URL directly based on filename to avoid relative path issues
+            filename = os.path.basename(video_path)
+            video_url = f"/static/animations/{filename}"
+            
+            # Debug logging
+            print(f"Video saved at: {video_path}")
+            print(f"Returning URL: {video_url}")
+            
             return jsonify({
-                "video_url": f"/{relative_url.replace(os.sep, '/')}",
+                "video_url": video_url,
                 "status": "success",
                 "text": text
             })
         else:
             return jsonify({"error": "Could not generate animation"}), 404
     except Exception as e:
+        print(f"Error generating animation: {e}")
         return jsonify({"error": str(e)}), 500
 
 # --- SOCKETIO EVENTS ---
+
 @socketio.on('connect')
 def handle_connect():
     client_id = request.sid
@@ -180,8 +204,6 @@ def handle_prediction(data):
         
         smoothed_label, confidence = recognizer.predict_sequence_smoothed(sequence)
         
-        print(f"📊 Prediction result: {smoothed_label} ({confidence:.3f})")
-        
         if confidence > MIN_CONFIDENCE:
             if not history or history[-1] != smoothed_label:
                 history.append(smoothed_label)
@@ -212,24 +234,25 @@ def handle_generate_animation(data):
             emit('animation_error', {'error': 'No text provided'})
             return
         
-        print(f"Generating animation for text: {text}")
+        print(f"Socket: Generating animation for text: {text}")
         video_path = generator.generate_video_from_text(text)
         
         if video_path and os.path.exists(video_path):
-            relative_url = os.path.relpath(video_path, start=ROOT_DIR)
-            video_url = f"/{relative_url.replace(os.sep, '/')}"
+            filename = os.path.basename(video_path)
+            video_url = f"/static/animations/{filename}"
+            
             emit('animation_result', {
                 'video_url': video_url, 
                 'text': text, 
                 'status': 'success'
             })
-            print(f"Animation generated: {video_url}")
+            print(f"Socket: Animation generated: {video_url}")
         else:
-            print(f"Error: Video generation failed or file not found.")
+            print(f"Socket Error: Video generation failed.")
             emit('animation_error', {'error': 'Could not generate animation'})
             
     except Exception as e:
-        print(f"Server Exception: {e}")
+        print(f"Socket Exception: {e}")
         emit('animation_error', {'error': str(e)})
 
 @socketio.on('clear_history')
