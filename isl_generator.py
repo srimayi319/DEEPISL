@@ -6,21 +6,26 @@ from uuid import uuid4
 from collections import defaultdict
 import mediapipe as mp
 import spacy
+import re
 
 # Load spaCy English model
+# FIX 1: Load with disable=["parser", "ner"] to prevent unwanted splits
+# FIX 2: Added explicit string replacement BEFORE spaCy runs
 try:
-    nlp = spacy.load("en_core_web_sm")
-    print("spaCy model loaded successfully")
+    nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    print("spaCy model loaded successfully with disable=parser,ner")
 except OSError:
     print("Downloading spaCy English model...")
     from spacy.cli import download
     download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
+    nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
+    print("spaCy model loaded successfully")
 
 mp_face_mesh = mp.solutions.face_mesh
 
 # Constants
-BG_COLOR = (255, 255, 255)
+BG_COLOR = (255, 255, 255) # White background
+TEXT_COLOR = (0, 0, 0)       # Black text
 SKELETON_COLOR = (171, 134, 46)
 HAND_COLOR = (111, 107, 229)
 JOINT_COLOR = (79, 199, 249)
@@ -35,7 +40,7 @@ class ISLGenerator:
         self.img_size = IMG_SIZE
         self.fps = FPS_ANIM
         
-        self.auxiliary_verbs = {'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 
+        self.auxiliary_verbs = {'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 'a',
                                  'do', 'does', 'did', 'have', 'has', 'had', 'will', 'shall'}
         
         self.question_words = {'what', 'where', 'when', 'why', 'how', 'which', 'who', 'whom'}
@@ -59,8 +64,14 @@ class ISLGenerator:
         try:
             with open(self.gloss_map_path, 'r') as f:
                 raw_map = json.load(f)
-                # Convert all keys to lowercase for consistent lookup
                 gloss_map = {k.lower(): v for k, v in raw_map.items()}
+
+            # Resolve paths relative to script directory
+            for key, path in gloss_map.items():
+                if not os.path.isabs(path):
+                    gloss_map_dir = os.path.dirname(os.path.abspath(self.gloss_map_path))
+                    full_path = os.path.join(gloss_map_dir, path)
+                    gloss_map[key] = full_path
 
             for phrase in gloss_map.keys():
                 words = phrase.split()
@@ -80,6 +91,33 @@ class ISLGenerator:
                   'violet', 'indigo', 'magenta', 'cyan', 'turquoise'}
         return word.lower() in colors
 
+    def _preprocess_contractions(self, text):
+        """
+        Replaces common contractions so spaCy doesn't split them weirdly.
+        This prevents 'I'm' from becoming 'I' + "'" + 'm'.
+        """
+        text = text.lower()
+        # Define replacements
+        replacements = {
+            "i'm": "i am",
+            "im": "i am",
+            "you're": "you are",
+            "we're": "we are",
+            "they're": "they are",
+            "he's": "he is",
+            "she's": "she is",
+            "it's": "it is"
+        }
+        
+        # Regex to match word boundaries so we don't replace "m" inside "me"
+        for contraction, replacement in replacements.items():
+            # Pattern: r"\b" + re.escape(contraction) + r"\b"
+            # Replaces " i'm " with " i am "
+            pattern = re.compile(r"\b" + re.escape(contraction) + r"\b")
+            text = pattern.sub(" " + replacement + " ", text)
+        
+        return text.strip()
+
     def _spacy_pos_tagging(self, sentence):
         """Use spaCy for POS tagging."""
         doc = nlp(sentence.lower())
@@ -87,6 +125,7 @@ class ISLGenerator:
         tags = []
         
         for token in doc:
+            # FIX: Filter out punctuation and artifacts to prevent 'm' token
             if not token.is_alpha:
                 continue
             tokens.append(token.text)
@@ -95,70 +134,36 @@ class ISLGenerator:
         return tokens, tags
 
     def apply_isl_grammar(self, sentence):
-        """
-        Apply ISL grammar rules:
-        1. Remove auxiliary verbs (as requested).
-        2. Reorder remaining words (Subject + Object + Verb + Adjectives + Others + Colors + Negation + Questions).
-        """
+        """Apply ISL grammar rules."""
         if not sentence or not sentence.strip():
             return []
         
         tokens, tags = self._spacy_pos_tagging(sentence)
-
-        print(f"Original: {sentence}")
-        print(f"Tokens: {tokens}")
-        print(f"POS Tags: {tags}")
-        
-        # --- ISL Grammar Step 1: Initialize categories ---
         subjects, objects, verbs, adjectives, colors, negations, questions, others = [], [], [], [], [], [], [], []
         
-        # --- ISL Grammar Step 2: Categorize and filter words ---
         for i, (word, pos_tag) in enumerate(zip(tokens, tags)):
-            
-            # **1. Filter Auxiliary Verbs FIRST**
             if word in self.auxiliary_verbs:
-                print(f"Filtering auxiliary verb: {word}")
                 continue
             
-            # 2. Identify question words (go to end)
             if word in self.question_words:
                 questions.append(word)
-            # 3. Identify negation (go to end)
             elif word in ['not', 'no', 'never', 'nothing']:
                 negations.append(word)
-            # 4. Identify colors (go to end)
             elif self._is_color_word(word):
                 colors.append(word)
-            # 5. Identify subjects (pronouns and first nouns), apply pronoun mapping
             elif pos_tag == 'PRON' or (pos_tag == 'NOUN' and not subjects and not objects):
                 subjects.append(self.pronoun_map.get(word, word))
-            # 6. Identify objects (nouns that come after subjects)
             elif pos_tag == 'NOUN':
                 objects.append(word)
-            # 7. Identify verbs (main verbs, auxiliaries already filtered)
             elif pos_tag == 'VERB':
                 verbs.append(word)
-            # 8. Identify adjectives (non-color)
             elif pos_tag == 'ADJ':
                 adjectives.append(word)
-            # 9. Other words (adverbs, prepositions, etc.)
             else:
                 others.append(word)
 
-        # --- ISL Grammar Step 3: Combine in ISL Order ---
-        # ISL word order: Subject + Object + Verb + Adjectives + Others + Colors + Negation + Questions
+        # ISL Word Order: Subject + Object + Verb + Adjectives + Others + Colors + Negation + Questions
         result = subjects + objects + verbs + adjectives + others + colors + negations + questions
-        
-        print(f"ISL Word Order Breakdown:")
-        print(f"  Subjects: {subjects}")
-        print(f"  Objects: {objects}")
-        print(f"  Verbs: {verbs}")
-        print(f"  Adjectives: {adjectives}")
-        print(f"  Colors: {colors}")
-        print(f"  Negations: {negations}")
-        print(f"  Questions: {questions}")
-        print(f"  Final Order: {result}")
-        
         return result
 
     def _text_to_gloss_sequence(self, tokens):
@@ -173,7 +178,6 @@ class ISLGenerator:
             longest_match_len = 0
             longest_match_gloss = None
 
-            # Look for the longest multi-word match starting at the current token
             for j in range(i, len(tokens)):
                 word = tokens[j]
                 if word in current_node:
@@ -188,67 +192,46 @@ class ISLGenerator:
                 glosses.append(longest_match_gloss)
                 i += longest_match_len
             else:
-                # No multi-word match, so fall back to single word or finger-spelling
                 word = tokens[i]
                 if word in self.gloss_map:
                     glosses.append(word)
                 else:
-                    # Finger-spelling fallback for unknown words
                     for char in word:
                         if char in self.gloss_map:
                             glosses.append(char)
                         else:
                             print(f"Warning: No gloss for character '{char}', skipping.")
                 i += 1
-                
         return glosses
 
     def text_to_gloss(self, sentence):
-        """
-        Convert English text to ISL gloss sequence following ISL grammar rules, 
-        handling common phrases and remaining words.
-        """
-        sentence_lower = sentence.lower().strip()
+        # FIX 3: Preprocess text before any processing
+        sentence = self._preprocess_contractions(sentence)
         
-        # Define common greetings and their expected length
         common_phrases = {
             'good morning': 2, 'good afternoon': 2, 
             'good evening': 2, 'good night': 2,
             'thank you': 2, 'hello': 1
         }
         
-        # 1. Check for common greetings and separate the rest of the sentence
         initial_glosses = []
-        remaining_sentence = sentence_lower
+        remaining_sentence = sentence
         
         for phrase, length in common_phrases.items():
-            if sentence_lower.startswith(phrase):
+            if sentence.startswith(phrase):
                 if phrase in self.gloss_map:
-                    print(f"Common phrase detected: {phrase}")
-                    # Add the entire phrase as one gloss token
                     initial_glosses.append(phrase) 
-                    
-                    # Cut the common phrase part from the sentence
-                    remaining_sentence = sentence_lower[len(phrase):].strip()
+                    remaining_sentence = sentence[len(phrase):].strip()
                     break
 
-        # 2. Process the remaining sentence using the full ISL grammar rules
         if remaining_sentence:
-            # We must tokenise and tag the remaining sentence before applying grammar
             remaining_tokens = [token.text for token in nlp(remaining_sentence) if token.is_alpha]
-            
-            # Apply the grammar rules to the remaining tokens
             processed_remaining_tokens = self.apply_isl_grammar(" ".join(remaining_tokens))
-            
-            # Convert the remaining tokens to glosses
             remaining_glosses = self._text_to_gloss_sequence(processed_remaining_tokens)
         else:
             remaining_glosses = []
             
-        # 3. Combine initial glosses and remaining glosses
         final_gloss_sequence = initial_glosses + remaining_glosses
-        
-        print(f"Final gloss sequence: {final_gloss_sequence}")
         return final_gloss_sequence
 
     def _draw_skeleton_on_frame(self, canvas, frame_data):
@@ -259,8 +242,7 @@ class ISLGenerator:
             return (int(point['x'] * self.img_size[0]), int(point['y'] * self.img_size[1]))
 
         def fill_torso(pose_points):
-            if not pose_points or len(pose_points) < 25:
-                return
+            if not pose_points or len(pose_points) < 25: return
             required_indices = [11, 12, 23, 24]
             if all(idx < len(pose_points) and pose_points[idx] for idx in required_indices):
                 pts = [pose_points[11], pose_points[12], pose_points[24], pose_points[23]]
@@ -268,7 +250,6 @@ class ISLGenerator:
                 cv2.fillPoly(canvas, [pts_array], (200, 150, 100))
 
         def draw_smiling_face(face_points):
-            # The existing logic for drawing the face is functional, no changes needed
             if not face_points:
                 center_x, center_y = self.img_size[0] // 2, self.img_size[1] // 3
                 head_radius = 40
@@ -282,7 +263,6 @@ class ISLGenerator:
                 cv2.ellipse(canvas, (center_x, mouth_y), (20, 15), 0, 0, 180, (0, 0, 0), 3)
                 return
             
-            # Existing logic for drawing a face based on landmarks
             xs = [p['x'] for p in face_points if 'x' in p]
             ys = [p['y'] for p in face_points if 'y' in p]
             if not xs or not ys: return
@@ -332,70 +312,86 @@ class ISLGenerator:
         draw_connections(pose_data, POSE_CONNECTIONS, SKELETON_COLOR, thickness=3)
         draw_connections(left_hand_data, HAND_CONNECTIONS, HAND_COLOR, thickness=2)
         draw_connections(right_hand_data, HAND_CONNECTIONS, HAND_COLOR, thickness=2)
-        
-       
 
+    # ==========================================
+    # NEW METHOD: Draw Text Label (Subtitle)
+    # ==========================================
+    def _draw_label(self, canvas, text):
+        """Draws a text label at: top left of the frame"""
+        if not text: return
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1.0
+        thickness = 3
+        color = TEXT_COLOR # Black
+        org = (30, 50) # Top Left position
+
+        # Draw Text
+        cv2.putText(canvas, text.upper(), org, font, font_scale, color, thickness, cv2.LINE_AA)
+    
+    # ==========================================
+    # UPDATED GENERATION LOGIC
+    # ==========================================
     def generate_video_from_text(self, text: str) -> str:
-        """Generate video from text using ISL grammar processing."""
+        """Generate video from text using ISL grammar processing with LABELS."""
         tokens = self.text_to_gloss(text)
-        combined_poses = []
         
         if not tokens:
             print("No tokens generated from text")
             return None
 
+        # CHANGE: Instead of a flat list of frames, we create a list of segments
+        # Each segment has: (Label, ListOfFrames)
+        video_segments = []
+        
         for token in tokens:
-            json_path = self.gloss_map.get(token.lower(), None) # Ensure lowercase lookup
+            json_path = self.gloss_map.get(token.lower(), None) 
+            
             if json_path and os.path.exists(json_path):
                 try:
                     with open(json_path, 'r') as f:
                         sign_data = json.load(f)
-                        combined_poses.extend(sign_data)
+                        # Store (Label, Frames) together
+                        video_segments.append( (token.upper(), sign_data) )
                 except json.JSONDecodeError:
                     print(f"Error: Invalid JSON in {json_path}")
             else:
                 print(f"Warning: No data for token: '{token}'")
 
-        if not combined_poses:
+        if not video_segments:
             print("No pose data collected")
             return None
 
-        # Use .webm extension for browser compatibility
-        final_name = f"animation_{uuid4().hex[:8]}.webm"
+        os.makedirs(self.data_dir, exist_ok=True)
+        final_name = f"animation_{uuid4().hex[:8]}.mp4"
         final_path = os.path.join(self.data_dir, final_name)
         
-        os.makedirs(self.data_dir, exist_ok=True)
+        # Use H264 codec
+        fourcc = cv2.VideoWriter_fourcc(*'H264')
         
-        # 'mp4v' is widely supported on Linux servers without extra drivers
-        # 'vp80' creates WebM videos which play in all browsers and work on Linux
-        fourcc = cv2.VideoWriter_fourcc(*'vp80')
-        video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
+        try:
+            video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
+            if not video_out.isOpened():
+                # Fallback if H.264 is not supported by your OpenCV build
+                fourcc_fallback = cv2.VideoWriter_fourcc(*'mp4v')
+                video_out = cv2.VideoWriter(final_path, fourcc_fallback, self.fps, self.img_size)
 
-        for frame_data in combined_poses:
-            canvas = np.full((self.img_size[1], self.img_size[0], 3), 255, dtype=np.uint8)
-            canvas[:] = BG_COLOR
-            self._draw_skeleton_on_frame(canvas, frame_data)
-            video_out.write(canvas)
-        
-        video_out.release()
-        print(f"Video saved at: {final_path}")
-        return final_path
-
-# Test the ISL grammar system
-if __name__ == "__main__":
-    generator = ISLGenerator("gloss_map.json", "output")
-    
-    test_sentences = [
-        "he has red car",
-        "what do you drink",
-        "she is not sick",
-        "where is my book",
-        "good morning teacher"
-    ]
-    
-    for sentence in test_sentences:
-        print(f"\n{'='*60}")
-        print(f"Testing: {sentence}")
-        print(f"{'='*60}")
-        gloss_sequence = generator.text_to_gloss(sentence) 
-        print(f"Final gloss sequence: {gloss_sequence}")
+            # CHANGE: Loop through segments instead of flat frames
+            for label, frames in video_segments:
+                for frame_data in frames:
+                    canvas = np.full((self.img_size[1], self.img_size[0], 3), 255, dtype=np.uint8)
+                    canvas[:] = BG_COLOR
+                    
+                    # Draw skeleton
+                    self._draw_skeleton_on_frame(canvas, frame_data)
+                    
+                    # NEW: Draw the label (Subtitle) on top
+                    self._draw_label(canvas, label)
+                    
+                    video_out.write(canvas)
+            
+            video_out.release()
+            print(f"Video saved at: {final_path}")
+            return final_path
+        except Exception as e:
+            print(f"Error generating video: {e}")
+            return None

@@ -7,68 +7,59 @@ class TranslationManager {
     }
 
     setupEventListeners() {
-        // WebSocket events
-        this.webSocketManager.on('predictionResult', (data) => this.handlePredictionResult(data));
-        this.webSocketManager.on('predictionError', (data) => this.handlePredictionError(data));
-        this.webSocketManager.on('statusUpdate', (data) => this.handleStatusUpdate(data));
+        console.log("TranslationManager: Setting up listeners.");
+        this.webSocketManager.on('predictionResult', (data) => {
+            console.log("TranslationManager: Received PREDICTION RESULT:", data);
+            this.handlePredictionResult(data)
+        });
+        this.webSocketManager.on('predictionError', (data) => {
+            console.error("TranslationManager: Received PREDICTION ERROR:", data);
+            this.handlePredictionError(data)
+        });
+        this.webSocketManager.on('statusUpdate', (data) => {
+            console.log("TranslationManager: Received STATUS UPDATE:", data);
+            this.handleStatusUpdate(data)
+        });
     }
 
     handlePredictionResult(data) {
-        const { label, confidence, sentence, history } = data;
+        const { label, confidence, history } = data;
+        console.log(`TranslationManager: Label: ${label}, Confidence: ${confidence}`);
         
-        // Update confidence display
-        const confidencePercent = this.uiManager.updateConfidence(confidence);
-        
-        // Update based on confidence level
-        if (confidence > CONFIG.MIN_CONFIDENCE) {
-            this.uiManager.updateStatus(`${label.toUpperCase()} (${confidencePercent}%)`, 'confident');
-            
-            // Update history and display
-            this.signHistory = history || [];
-            
-            if (sentence) {
-                this.uiManager.updateDetectedText(sentence);
-            }
-            
-            this.uiManager.updateRecentSigns(this.signHistory);
+        this.uiManager.updateConfidence(confidence);
+
+        if (label) {
+            this.uiManager.updateStatus(`${label.toUpperCase()}`, 'confident');
         } else {
             this.uiManager.updateStatus('DETECTING...', 'uncertain');
         }
+
+        this.signHistory = history || [];
+
+        console.log(`TranslationManager: Updating Detected Signs to:`, history);
+        this.uiManager.updateDetectedSigns(this.signHistory);
     }
 
     handlePredictionError(data) {
-        console.error('Prediction error:', data.error);
+        console.error('TranslationManager: Prediction error:', data?.error);
         this.uiManager.updateStatus('PREDICTION_ERROR', 'error');
     }
 
     handleStatusUpdate(data) {
-        this.uiManager.updateStatus(data.status);
-    }
-
-    // Method called by MediaPipe when sequence is ready
-    handleSequenceReady(sequence) {
-        if (this.webSocketManager.getConnectionStatus()) {
-            const success = this.webSocketManager.predictSequence(sequence, this.signHistory);
-            if (!success) {
-                this.uiManager.updateStatus('WEBSOCKET_ERROR', 'error');
-            }
-        } else {
-            this.uiManager.updateStatus('DISCONNECTED', 'error');
+        if (data?.status) {
+            this.uiManager.updateStatus(data.status);
         }
     }
 
     clearHistory() {
+        console.log("TranslationManager: Clearing History");
         this.signHistory = [];
-        this.uiManager.updateRecentSigns(this.signHistory);
+        this.uiManager.updateDetectedSigns([]);
         this.uiManager.clearDetectedText();
         this.webSocketManager.clearHistory();
     }
 
     getSignHistory() {
         return this.signHistory;
-    }
-
-    setSignHistory(history) {
-        this.signHistory = history || [];
     }
 }

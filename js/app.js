@@ -1,140 +1,135 @@
 class DeepISLApp {
     constructor() {
-        this.webSocketManager = new WebSocketManager();
+        this.wsManager = new WebSocketManager();
+        this.mpManager = new MediaPipeManager();
         this.uiManager = new UIManager();
-        this.mediaPipeManager = new MediaPipeManager();
-        this.translationManager = null;
-        this.animationManager = null;
-        
+        this.translationManager = new TranslationManager(this.wsManager, this.uiManager);
+        this.animationManager = new AnimationManager(this.wsManager, this.uiManager);
+        this.signHistory = [];
         this.initialize();
     }
 
     async initialize() {
-        try {
-            console.log('Initializing DeepISL App...');
-            
-            // Initialize managers in sequence
-            await this.mediaPipeManager.initialize();
-            this.webSocketManager.initialize();
-            
-            // Create dependent managers
-            this.translationManager = new TranslationManager(this.webSocketManager, this.uiManager);
-            this.animationManager = new AnimationManager(this.webSocketManager, this.uiManager);
-            
-            // Set up MediaPipe callbacks
-            this.mediaPipeManager.setPredictionCallback(
-                (sequence) => this.translationManager.handleSequenceReady(sequence)
-            );
-            
-            this.mediaPipeManager.setErrorCallback(
-                (error) => this.handleMediaPipeError(error)
-            );
-            
-            // Set up event listeners
-            this.setupEventListeners();
-            
-            console.log('DeepISL App initialized successfully');
-            
-        } catch (error) {
-            console.error('Failed to initialize app:', error);
-            this.uiManager.updateStatus('INIT_ERROR', 'error');
+        this.uiManager.initializeElements();
+        await this.mpManager.initialize();
+        this.wsManager.initialize();
+
+        this.mpManager.setPredictionCallback((seq) => this.handlePrediction(seq));
+        this.mpManager.setStateChangeCallback((state) => this.handleMediaPipeState(state));
+        this.mpManager.setClearBufferCallback(() => {
+            this.wsManager.clearPredictionBuffer();
+        });
+
+        this.setupTabs();
+        this.setupAnimationButton();
+        this.setupMediaPipeControls();
+        this.setupConstructSentenceButton();
+
+        this.wsManager.on('predictionResult', (data) => this.handleResult(data));
+    }
+
+    setupTabs() {
+        const islBtn = document.getElementById('isl-to-text-btn');
+        const textBtn = document.getElementById('text-to-isl-btn');
+
+        if (!islBtn || !textBtn) return;
+
+        islBtn.addEventListener('click', () => {
+            this.uiManager.switchMode("isl-to-text");
+        });
+
+        textBtn.addEventListener('click', () => {
+            this.uiManager.switchMode("text-to-isl");
+        });
+    }
+
+    setupAnimationButton() {
+        const generateBtn = document.getElementById('generate-btn');
+        if (generateBtn) {
+            generateBtn.addEventListener('click', () => {
+                this.animationManager.generateAnimation();
+            });
         }
     }
 
-    setupEventListeners() {
-        // Mode switching
-        this.uiManager.getElement(ELEMENTS.ISL_TO_TEXT_BTN).addEventListener('click', 
-            () => this.uiManager.switchMode('isl-to-text'));
-        this.uiManager.getElement(ELEMENTS.TEXT_TO_ISL_BTN).addEventListener('click', 
-            () => this.uiManager.switchMode('text-to-isl'));
+    setupMediaPipeControls() {
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const clearBtn = document.getElementById('clear-btn');
 
-        // ISL to Text controls
-        this.uiManager.getElement(ELEMENTS.START_BTN).addEventListener('click', 
-            () => this.startSignDetection());
-        this.uiManager.getElement(ELEMENTS.STOP_BTN).addEventListener('click', 
-            () => this.stopSignDetection());
-        this.uiManager.getElement(ELEMENTS.CLEAR_BTN).addEventListener('click', 
-            () => this.translationManager.clearHistory());
+        if (startBtn) {
+            startBtn.addEventListener('click', () => {
+                this.mpManager.startCapture();
+                this.uiManager.updateStatus('INITIALIZING CAMERA...');
+                this.signHistory = [];
+                this.uiManager.updateDetectedSigns([]);
+                this.uiManager.clearDetectedText();
+            });
+        }
 
-        // Text to ISL controls
-        this.uiManager.getElement(ELEMENTS.GENERATE_BTN).addEventListener('click', 
-            () => this.animationManager.generateAnimation());
+        if (stopBtn) {
+            stopBtn.addEventListener('click', () => {
+                this.mpManager.stopCapture();
+                this.uiManager.updateStatus('IDLE');
+            });
+        }
 
-        // Window events
-        window.addEventListener('resize', this.debounce(() => this.handleResize(), 250));
-        document.addEventListener('visibilitychange', () => this.handleVisibilityChange());
-        
-        // Handle page unload
-        window.addEventListener('beforeunload', () => this.cleanup());
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.signHistory = [];
+                this.translationManager.clearHistory();
+                this.uiManager.clearDetectedText();
+                this.uiManager.updateDetectedSigns([]);
+                this.uiManager.updateStatus('CLEARED', 'uncertain');
+            });
+        }
     }
 
-    async startSignDetection() {
-        if (this.mediaPipeManager.isCapturing()) {
-            console.log('Sign detection already active');
-            return;
+    setupConstructSentenceButton() {
+        const btn = document.getElementById('construct-sentence-btn');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                this.uiManager.constructSentence();
+            });
         }
-        
-        if (!this.webSocketManager.getConnectionStatus()) {
-            alert('Not connected to server. Please wait for connection or refresh the page.');
-            return;
+    }
+
+    handleMediaPipeState(state) {
+        if (this.uiManager.getCurrentMode() !== 'isl-to-text') return;
+
+        if (state === 'WAITING') {
+            this.uiManager.updateStatus('WAITING FOR SIGN', 'uncertain');
+        } else if (state === 'RECORDING') {
+            this.uiManager.updateStatus('🔴 RECORDING...', 'recording');
+        } else if (state === 'PROCESSING...') {
+            this.uiManager.updateStatus('PREDICTING...', 'confident');
+        } else if (state === 'COOLDOWN...') {
+            this.uiManager.updateStatus('COOLDOWN...', 'uncertain');
         }
+    }
+
+    handlePrediction(sequence) {
+        if (this.uiManager.getCurrentMode() !== 'isl-to-text') return;
+        this.wsManager.predictSequence(sequence);
+    }
+
+    handleResult(data) {
+        if (this.uiManager.getCurrentMode() !== 'isl-to-text') return;
+
+        const { label, confidence, history } = data;
         
-        this.uiManager.showVideoPlaceholder(false);
-        this.uiManager.updateStatus('STARTING...');
+        this.uiManager.updateConfidence(confidence);
         
-        const success = await this.mediaPipeManager.startCapture();
-        if (success) {
-            this.uiManager.updateStatus('DETECTING...');
+        if (confidence > CONFIG.MIN_CONFIDENCE) {
+            this.signHistory = history; 
+            this.uiManager.updateDetectedSigns(history);
+            this.uiManager.updateStatus(`${label.toUpperCase()}`, 'confident');
         } else {
-            this.uiManager.updateStatus('CAMERA_ERROR', 'error');
-            this.uiManager.showVideoPlaceholder(true);
+            this.uiManager.updateStatus('WAITING FOR SIGN', 'uncertain');
         }
-    }
-
-    stopSignDetection() {
-        this.mediaPipeManager.stopCapture();
-        this.uiManager.updateStatus('IDLE');
-        this.uiManager.showVideoPlaceholder(true);
-    }
-
-    handleResize() {
-        if (this.mediaPipeManager.isCapturing() && this.mediaPipeManager.video.videoWidth) {
-            this.mediaPipeManager.canvas.width = this.mediaPipeManager.video.videoWidth;
-            this.mediaPipeManager.canvas.height = this.mediaPipeManager.video.videoHeight;
-        }
-    }
-
-    handleVisibilityChange() {
-        if (document.hidden && this.mediaPipeManager.isCapturing()) {
-            this.stopSignDetection();
-        }
-    }
-
-    handleMediaPipeError(error) {
-        console.error('MediaPipe error:', error);
-        this.uiManager.updateStatus('MEDIAPIPE_ERROR', 'error');
-        this.stopSignDetection();
-    }
-
-    debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
-    }
-
-    cleanup() {
-        this.mediaPipeManager.cleanup();
-        this.webSocketManager.disconnect();
     }
 }
 
-// Initialize the application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.deepISLApp = new DeepISLApp();
+    window.app = new DeepISLApp();
 });

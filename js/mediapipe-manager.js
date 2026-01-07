@@ -1,399 +1,231 @@
 class MediaPipeManager {
     constructor() {
-        this.holistic = null;
+        this.hands = null;
+        this.pose = null;
         this.capturing = false;
-        this.frameCounter = 0;
-        this.keypointSequence = [];
-        this.lastPredictionTime = 0;
+
         this.video = null;
         this.canvas = null;
         this.canvasCtx = null;
+
+        this.keypointSequence = [];
+        this.prev_keypoints = null;
+
+        this.motionStarted = false;
+        this.isCooldown = false;
+        this.framesCollected = 0;
+
         this.onPredictionReady = null;
-        this.onError = null;
-        
-        // Debug counters
-        this.framesProcessed = 0;
-        this.predictionsAttempted = 0;
-        this.landmarksDetected = {
-            leftHand: 0,
-            rightHand: 0,
-            pose: 0
-        };
+        this.onStateChange = null;
+        this.onClearBuffer = null;
+
+        // --- FIX: Declare these here so processFrame() can see them ---
+        this.lastHands = null;
+        this.lastPose = null;
     }
 
     async initialize() {
         try {
-            console.log('🔄 Initializing MediaPipe Manager...');
-            
             this.video = document.createElement('video');
             this.canvas = document.getElementById(ELEMENTS.LIVE_CANVAS);
-            
-            if (!this.canvas) {
-                throw new Error('Canvas element not found');
-            }
-            
             this.canvasCtx = this.canvas.getContext('2d');
 
-            // Initialize MediaPipe Holistic
-            this.holistic = new Holistic({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+            // ===== Hands =====
+            this.hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
 
-            // Set options matching your OpenCV configuration
-            this.holistic.setOptions({
+            this.hands.setOptions({
+                maxNumHands: 2,
                 modelComplexity: 1,
-                smoothLandmarks: true,
-                enableSegmentation: false,
-                smoothSegmentation: false,
-                refineFaceLandmarks: false,
-                minDetectionConfidence: 0.5,  // Match your OpenCV: 0.5
-                minTrackingConfidence: 0.5    // Match your OpenCV: 0.5
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
             });
 
-            this.holistic.onResults((results) => this.onResults(results));
-            this.holistic.onError((error) => this.handleError(error));
-            
-            console.log('✅ MediaPipe Holistic initialized successfully');
+            // ===== Pose =====
+            this.pose = new Pose({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+            });
+
+            this.pose.setOptions({
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            // Store results in these variables
+            this.hands.onResults((res) => this.lastHands = res);
+            this.pose.onResults((res) => this.lastPose = res);
+
+            console.log("✅ MediaPipe Hands + Pose initialized");
             return true;
-            
-        } catch (error) {
-            console.error('❌ Failed to initialize MediaPipe:', error);
-            this.handleError('MEDIAPIPE_INIT_ERROR');
+
+        } catch (err) {
+            console.error("❌ MediaPipe init error:", err);
             return false;
         }
     }
 
     async startCapture() {
-        if (this.capturing) {
-            console.log('⚠️ Already capturing video');
-            return false;
-        }
+        if (this.capturing) return;
 
         try {
-            console.log('📷 Requesting camera access...');
-            
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { 
-                    width: 640, 
-                    height: 480,
-                    frameRate: { ideal: 30 }
-                } 
-            });
-            
-            this.video.srcObject = stream;
-            this.capturing = true;
-            this.keypointSequence = [];
-            this.frameCounter = 0;
-            this.framesProcessed = 0;
-            this.predictionsAttempted = 0;
-            
-            console.log('✅ Camera access granted, starting video stream...');
-            
-            return new Promise((resolve) => {
-                this.video.onloadedmetadata = () => {
-                    console.log(`🎥 Video stream: ${this.video.videoWidth}x${this.video.videoHeight}`);
-                    
-                    this.video.play();
-                    this.canvas.width = this.video.videoWidth;
-                    this.canvas.height = this.video.videoHeight;
-                    
-                    // Start processing frames
-                    this.processVideoFrame();
-                    resolve(true);
-                };
-                
-                this.video.onerror = (error) => {
-                    console.error('❌ Video playback error:', error);
-                    this.handleError('VIDEO_PLAYBACK_ERROR');
-                    resolve(false);
-                };
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 640, height: 480, frameRate: 30 }
             });
 
+            this.video.srcObject = stream;
+            this.video.play();
+
+            this.canvas.width = 640;
+            this.canvas.height = 480;
+
+            this.capturing = true;
+            this.keypointSequence = [];
+            this.prev_keypoints = null;
+            this.motionStarted = false;
+            this.isCooldown = false;
+
+            this.processFrame();
         } catch (err) {
-            console.error("❌ Error accessing webcam: ", err);
-            this.handleError('CAMERA_ACCESS_ERROR');
-            return false;
+            console.error("Camera Error:", err);
         }
     }
 
     stopCapture() {
-        if (this.capturing) {
-            console.log('🛑 Stopping video capture...');
-            this.capturing = false;
-            
-            if (this.video.srcObject) {
-                this.video.srcObject.getTracks().forEach(track => {
-                    track.stop();
-                    console.log('📹 Track stopped:', track.kind);
-                });
-                this.video.srcObject = null;
-            }
-            
-            this.canvasCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            console.log('✅ Video capture stopped');
+        this.capturing = false;
+        if (this.video.srcObject) {
+            this.video.srcObject.getTracks().forEach(t => t.stop());
         }
     }
 
-    async processVideoFrame() {
+    async processFrame() {
         if (!this.capturing) return;
-        
-        this.frameCounter++;
-        
-        // Process every frame (remove frame skipping for better accuracy)
-        try {
-            await this.holistic.send({ image: this.video });
-        } catch (error) {
-            console.error('❌ Error processing frame:', error);
+
+        await this.hands.send({ image: this.video });
+        await this.pose.send({ image: this.video });
+
+        if (this.lastHands && this.lastPose) {
+            this.onResults(this.lastHands, this.lastPose);
         }
-        
-        requestAnimationFrame(() => this.processVideoFrame());
+
+        requestAnimationFrame(() => this.processFrame());
     }
 
-    onResults(results) {
-        this.framesProcessed++;
-        
-        // Draw landmarks on canvas
-        this.drawResults(results);
-        
-        // Extract keypoints and store in sequence
-        const keypoints = this.extractKeypoints(results);
-        this.keypointSequence.push(keypoints);
-        
-        // Log sequence progress periodically
-        if (this.framesProcessed % 30 === 0) {
-            console.log(`📊 Sequence progress: ${this.keypointSequence.length}/${CONFIG.N_FRAMES} frames`);
-        }
-        
-        // Check if we have enough frames for prediction
-        const now = Date.now();
-        if (this.keypointSequence.length >= CONFIG.N_FRAMES && 
-            (now - this.lastPredictionTime) > CONFIG.PREDICTION_THROTTLE_MS) {
-            
-            this.predictionsAttempted++;
-            this.lastPredictionTime = now;
-            
-            // Create a copy of the sequence for prediction
-            const sequenceToPredict = [...this.keypointSequence];
-            
-            // Keep some frames for continuity (sliding window)
-            this.keypointSequence = this.keypointSequence.slice(-10);
-            
-            console.log(`🎯 Prediction attempt #${this.predictionsAttempted}:`, {
-                sequenceLength: sequenceToPredict.length,
-                timestamp: now
-            });
-            
-            // Send for prediction
-            if (this.onPredictionReady) {
-                this.onPredictionReady(sequenceToPredict);
-            } else {
-                console.error('❌ No prediction callback set!');
-            }
-        }
-    }
-
-    drawResults(results) {
-        // Clear canvas
+    onResults(handResults, poseResults) {
         this.canvasCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        // Flip horizontally for mirror effect
-        this.canvasCtx.save();
-        this.canvasCtx.scale(-1, 1);
-        this.canvasCtx.translate(-this.canvas.width, 0);
-        
-        // Draw video frame
-        this.canvasCtx.drawImage(results.image, 0, 0, this.canvas.width, this.canvas.height);
-        
-        // Draw landmarks
-        this.drawLandmarks(results);
-        
-        this.canvasCtx.restore();
-    }
+        this.canvasCtx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
 
-    drawLandmarks(results) {
-        // Draw pose connections (matching your OpenCV code)
-        if (results.poseLandmarks) {
-            // Draw shoulder-to-elbow and elbow-to-wrist connections
-            const connections = [
-                [11, 13], [13, 15], // Left arm
-                [12, 14], [14, 16]  // Right arm
-            ];
-            
-            connections.forEach(([start, end]) => {
-                if (results.poseLandmarks[start] && results.poseLandmarks[end]) {
-                    const startPoint = results.poseLandmarks[start];
-                    const endPoint = results.poseLandmarks[end];
-                    
-                    this.canvasCtx.beginPath();
-                    this.canvasCtx.moveTo(startPoint.x * this.canvas.width, startPoint.y * this.canvas.height);
-                    this.canvasCtx.lineTo(endPoint.x * this.canvas.width, endPoint.y * this.canvas.height);
-                    this.canvasCtx.strokeStyle = '#00FF00';
-                    this.canvasCtx.lineWidth = 4;
-                    this.canvasCtx.stroke();
+        if (typeof drawConnectors !== 'undefined') {
+            if (handResults.multiHandLandmarks) {
+                for (const lm of handResults.multiHandLandmarks) {
+                    drawConnectors(this.canvasCtx, lm, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
                 }
-            });
-            
-            // Draw pose landmarks
-            drawLandmarks(this.canvasCtx, results.poseLandmarks, { 
-                color: '#FF0000', 
-                lineWidth: 2,
-                radius: 3 
-            });
+            }
+
+            if (poseResults.poseLandmarks) {
+                drawConnectors(this.canvasCtx, poseResults.poseLandmarks, POSE_CONNECTIONS, { color: '#FF0000', lineWidth: 2 });
+            }
         }
-        
-        // Draw hand landmarks
-        if (results.leftHandLandmarks) {
-            drawConnectors(this.canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, { 
-                color: '#CC0000', 
-                lineWidth: 5 
-            });
-            drawLandmarks(this.canvasCtx, results.leftHandLandmarks, { 
-                color: '#FF0000', 
-                lineWidth: 2,
-                radius: 3 
-            });
-        }
-        
-        if (results.rightHandLandmarks) {
-            drawConnectors(this.canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, { 
-                color: '#00CC00', 
-                lineWidth: 5 
-            });
-            drawLandmarks(this.canvasCtx, results.rightHandLandmarks, { 
-                color: '#FFFF00', 
-                lineWidth: 2,
-                radius: 3 
-            });
-        }
+
+        const keypoints = this.extractKeypoints(handResults, poseResults);
+        const motion = this.calculateMotion(keypoints, this.prev_keypoints);
+        this.prev_keypoints = keypoints;
+
+        this.canvasCtx.fillStyle = "white";
+        this.canvasCtx.font = "16px Arial";
+        this.canvasCtx.fillText(`Motion: ${motion.toFixed(4)}`, 20, 30);
+
+        this.runStateMachine(keypoints, motion);
     }
 
-    extractKeypoints(results) {
-        // Reset detection counters
-        this.landmarksDetected.leftHand = 0;
-        this.landmarksDetected.rightHand = 0;
-        this.landmarksDetected.pose = 0;
-        
-        const extractLandmarks = (landmarks, count, handName) => {
-            if (!landmarks || landmarks.length === 0) {
-                return new Array(count * 3).fill(0);
+    extractKeypoints(handResults, poseResults) {
+        let left = new Array(63).fill(0);
+        let right = new Array(63).fill(0);
+
+        if (handResults.multiHandLandmarks && handResults.multiHandedness) {
+            for (let i = 0; i < handResults.multiHandLandmarks.length; i++) {
+                const lm = handResults.multiHandLandmarks[i];
+                const label = handResults.multiHandedness[i].label;
+                const flat = lm.flatMap(p => [p.x, p.y, p.z]);
+                if (label === "Left") left = flat;
+                else right = flat;
             }
-            
-            // Count detected landmarks
-            this.landmarksDetected[handName] = landmarks.length;
-            
-            return landmarks.flatMap(landmark => [landmark.x, landmark.y, landmark.z]);
-        };
-        
-        // Extract pose landmarks (6 keypoints: shoulders, elbows, wrists)
-        const poseCoords = [];
-        CONFIG.POSE_INDICES.forEach(index => {
-            if (results.poseLandmarks && results.poseLandmarks[index]) {
-                const landmark = results.poseLandmarks[index];
-                poseCoords.push(landmark.x, landmark.y, landmark.z);
-                this.landmarksDetected.pose++;
+        }
+
+        let pose = new Array(18).fill(0);
+        if (poseResults.poseLandmarks) {
+            pose = CONFIG.POSE_INDICES.flatMap(i => {
+                const p = poseResults.poseLandmarks[i];
+                return [p.x, p.y, p.z];
+            });
+        }
+
+        return [...left, ...right, ...pose];
+    }
+
+    calculateMotion(curr, prev) {
+        if (!prev) return 0;
+        let sum = 0;
+        for (let i = 0; i < curr.length; i++) {
+            sum += (curr[i] - prev[i]) ** 2;
+        }
+        return Math.sqrt(sum);
+    }
+
+    runStateMachine(keypoints, motion) {
+        if (!this.motionStarted) {
+            if (this.isCooldown) return;
+
+            if (motion > CONFIG.MOTION_THRESHOLD) {
+                if (this.onClearBuffer) this.onClearBuffer();
+                this.motionStarted = true;
+                this.keypointSequence = [];
+                this.framesCollected = 0;
+                this.notifyState("RECORDING");
             } else {
-                poseCoords.push(0, 0, 0);
+                this.notifyState("WAITING");
             }
-        });
-        
-        // Extract hand landmarks
-        const leftHandCoords = extractLandmarks(results.leftHandLandmarks, 21, 'leftHand');
-        const rightHandCoords = extractLandmarks(results.rightHandLandmarks, 21, 'rightHand');
-        
-        // Combine all keypoints
-        const keypoints = [...leftHandCoords, ...rightHandCoords, ...poseCoords];
-        
-        // Debug logging (first frame and periodically)
-        if (this.framesProcessed === 1 || this.framesProcessed % 60 === 0) {
-            console.log('🔍 Keypoint Extraction Debug:', {
-                totalLength: keypoints.length,
-                leftHandDetected: this.landmarksDetected.leftHand,
-                rightHandDetected: this.landmarksDetected.rightHand,
-                poseDetected: this.landmarksDetected.pose,
-                keypointRange: `[${Math.min(...keypoints).toFixed(3)} - ${Math.max(...keypoints).toFixed(3)}]`,
-                hasNaN: keypoints.some(val => isNaN(val))
-            });
-        }
-        
-        return keypoints;
-    }
 
-    validateSequence(sequence) {
-        if (!Array.isArray(sequence)) {
-            console.error('❌ Sequence is not an array');
-            return false;
-        }
-        
-        if (sequence.length !== CONFIG.N_FRAMES) {
-            console.error(`❌ Sequence length mismatch: ${sequence.length} vs ${CONFIG.N_FRAMES}`);
-            return false;
-        }
-        
-        for (let i = 0; i < sequence.length; i++) {
-            const frame = sequence[i];
-            if (!Array.isArray(frame) || frame.length !== 144) {
-                console.error(`❌ Frame ${i} shape mismatch: ${frame.length} vs 144`);
-                return false;
+        } else {
+            // --- MOTION GATE ---
+            // Ensure motion doesn't drop too low (prevents static frames)
+            if (motion < (CONFIG.MOTION_THRESHOLD / 2)) {
+                 this.motionStarted = false;
+                 this.keypointSequence = [];
+                 this.framesCollected = 0;
+                 console.log("🔴 Motion lost during capture");
+                 return;
             }
-            
-            // Check for invalid values
-            if (frame.some(val => isNaN(val) || !isFinite(val))) {
-                console.error(`❌ Frame ${i} contains invalid values`);
-                return false;
+
+            this.keypointSequence.push(keypoints);
+            this.framesCollected++;
+
+            if (this.framesCollected >= CONFIG.N_FRAMES) {
+                // --- FIX: Sanity check before sending ---
+                if (this.keypointSequence.length > 0 && this.keypointSequence[0].length === 144) {
+                    const seq = [...this.keypointSequence];
+                    this.onPredictionReady(seq);
+                } else {
+                    console.error("❌ Invalid sequence shape sent to predictor");
+                }
+
+                this.motionStarted = false;
+                this.keypointSequence = [];
+                this.framesCollected = 0;
+                this.isCooldown = true;
+                this.notifyState("COOLDOWN");
+
+                setTimeout(() => this.isCooldown = false, 2000);
             }
         }
-        
-        console.log('✅ Sequence validation passed');
-        return true;
     }
 
-    handleError(error) {
-        console.error('❌ MediaPipe Holistic Error:', error);
-        
-        const errorMap = {
-            'MEDIAPIPE_INIT_ERROR': 'Failed to initialize MediaPipe',
-            'CAMERA_ACCESS_ERROR': 'Cannot access camera. Please check permissions.',
-            'VIDEO_PLAYBACK_ERROR': 'Error playing video stream'
-        };
-        
-        const userMessage = errorMap[error] || `MediaPipe error: ${error}`;
-        
-        if (this.onError) {
-            this.onError(userMessage);
-        }
+    notifyState(state) {
+        if (this.onStateChange) this.onStateChange(state);
     }
 
-    setPredictionCallback(callback) {
-        this.onPredictionReady = callback;
-        console.log('✅ Prediction callback set');
-    }
-
-    setErrorCallback(callback) {
-        this.onError = callback;
-        console.log('✅ Error callback set');
-    }
-
-    isCapturing() {
-        return this.capturing;
-    }
-
-    getStats() {
-        return {
-            framesProcessed: this.framesProcessed,
-            predictionsAttempted: this.predictionsAttempted,
-            currentSequenceLength: this.keypointSequence.length,
-            landmarksDetected: this.landmarksDetected,
-            isCapturing: this.capturing
-        };
-    }
-
-    cleanup() {
-        console.log('🧹 Cleaning up MediaPipe manager...');
-        this.stopCapture();
-        
-        if (this.holistic) {
-            this.holistic.close();
-            console.log('✅ MediaPipe Holistic closed');
-        }
-    }
+    setPredictionCallback(cb) { this.onPredictionReady = cb; }
+    setStateChangeCallback(cb) { this.onStateChange = cb; }
+    setClearBufferCallback(cb) { this.onClearBuffer = cb; }
 }

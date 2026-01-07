@@ -42,23 +42,20 @@ class AnimationManager {
     }
 
     handleAnimationError(error) {
-        console.error('Animation error:', error);
-        this.uiManager.showAnimationError(error);
-    }
+        // FIX: Handle both string errors and object errors
+        let errorMessage = "Unknown error";
+        
+        if (typeof error === 'string') {
+            errorMessage = error;
+        } else if (error.error) {
+            errorMessage = error.error;
+        } else if (error.message) {
+            errorMessage = error.message;
+        } else {
+            errorMessage = JSON.stringify(error);
+        }
 
-    // Utility method to validate text input
-    validateText(text) {
-        if (!text || text.trim().length === 0) {
-            return { valid: false, error: 'Text cannot be empty' };
-        }
-        
-        if (text.length > 500) {
-            return { valid: false, error: 'Text too long (max 500 characters)' };
-        }
-        
-        // Basic sanitization
-        const sanitizedText = text.replace(/[<>]/g, '');
-        
-        return { valid: true, text: sanitizedText };
+        console.error('Animation error:', errorMessage);
+        this.uiManager.showAnimationError(errorMessage);
     }
 }

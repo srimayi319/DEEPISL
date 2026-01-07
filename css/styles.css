@@ -1,86 +1,136 @@
 body { 
-    font-family: 'Inter', sans-serif; 
+    font-family: 'Segoe UI', sans-serif; 
 }
 
+/* HEADERS */
 .main-header { 
-    font-size: 3rem; 
-    color: #4B4B4B; 
-    text-align: center; 
-    font-weight: bold; 
+    font-size: 2.5rem; 
+    font-weight: 800; 
+    color: #1f2937; 
 }
-
 .sub-header { 
-    text-align: center; 
-    color: #8A8A8A; 
+    color: #6b7280; 
+    font-size: 1.2rem; 
 }
 
-.video-container {
-    border: 2px dashed #ccc;
-    border-radius: 12px;
-    overflow: hidden;
-    background-color: #f0f2f6;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 480px;
-    position: relative;
-}
-
-.status-box {
-    background-color: #f0f2f6;
-    padding: 1rem;
-    border-radius: 12px;
+/* CONNECTION STATUS */
+.connection-status {
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: bold;
     text-align: center;
-    transition: all 0.3s ease;
+    margin-bottom: 20px;
+    display: inline-block;
+}
+.connection-status.connected { 
+    background-color: #d1fae5; 
+    color: #065f46; 
+}
+.connection-status.disconnected { 
+    background-color: #fee2e2; 
+    color: #991b1b; 
 }
 
-.status-box.confident { 
-    background-color: #d4edda; 
-    color: #155724; 
+/* VIDEO & ANIMATION CONTAINERS */
+.video-container {
+    position: relative;
+    width: 100%;
+    /* FIX: Set a fixed height to make both boxes identical size */
+    height: 400px; 
+    
+    /* FIX: Ensure background is white as requested */
+    background-color: #ffffff;
+    
+    border-radius: 1rem;
+    overflow: hidden;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    border: 1px solid #e5e7eb;
 }
 
-.status-box.uncertain { 
-    background-color: #fff3cd; 
-    color: #856404; 
+#live-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; 
+    height: 100%;
+    object-fit: contain; /* Keeps the webcam feed proportional inside the box */
 }
 
-.status-box.error { 
-    background-color: #f8d7da; 
-    color: #721c24; 
+#animation-video {
+    position: absolute;
+    top: 0; 
+    left: 0;
+    width: 100%; 
+    height: 100%;
+    object-fit: contain; /* Keeps the generated video proportional inside the box */
+    background-color: #ffffff; 
+    z-index: 10;
 }
 
+#video-placeholder, #animation-text-placeholder {
+    position: absolute;
+    top: 50%; 
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 5;
+    color: #9ca3af; /* Darker text for white background */
+}
+
+/* STATUS BOX */
+.status-box {
+    background: white;
+    border: 1px solid #e5e7eb;
+    padding: 1rem;
+    border-radius: 0.75rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+}
 .status-box .title { 
     font-weight: bold; 
+    color: #9ca3af; 
+    font-size: 0.8rem; 
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
-
 .status-box .value { 
     font-size: 1.5rem; 
     font-weight: bold; 
+    color: #1f2937; 
+}
+.status-box.confident .value { 
+    color: #16a34a; 
+}
+.status-box.recording .value { 
+    color: #dc2626; 
 }
 
-canvas { 
-    transform: scaleX(-1); 
+/* CUSTOM SCROLLBARS */
+textarea {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 #f1f5f9;
+}
+textarea::-webkit-scrollbar {
+    width: 8px;
+}
+textarea::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+textarea::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 4px;
 }
 
-.connection-status { 
-    position: fixed; 
-    top: 10px; 
-    right: 10px; 
-    padding: 5px 10px; 
-    border-radius: 15px; 
-    font-size: 12px; 
+/* BUTTONS */
+button {
+    transition: all 0.2s ease;
+}
+button:active {
+    transform: scale(0.98);
 }
 
-.connected { 
-    background: green; 
-    color: white; 
-}
-
-.disconnected { 
-    background: red; 
-    color: white; 
-}
-
-.hidden {
-    display: none !important;
+/* DETECTED SIGNS LIST */
+#detected-signs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
 }

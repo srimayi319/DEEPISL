@@ -18,7 +18,9 @@
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div class="space-y-6">
+            
+            <!-- LEFT COLUMN: Camera & Input -->
+            <div id="input-column" class="space-y-6 lg:col-span-1">
                 <div class="flex space-x-4 p-1 rounded-full bg-gray-200">
                     <button id="isl-to-text-btn" class="flex-1 py-2 px-4 rounded-full font-bold bg-white text-gray-800 shadow-md transition-colors">ISL → Text</button>
                     <button id="text-to-isl-btn" class="flex-1 py-2 px-4 rounded-full font-bold text-gray-600 transition-colors">Text → ISL</button>
@@ -33,16 +35,7 @@
                     <div class="flex space-x-4 mt-4">
                         <button id="start-btn" class="w-full py-3 px-6 rounded-xl font-bold bg-green-500 text-white hover:bg-green-600 transition-colors">▶️ Start Signing</button>
                         <button id="stop-btn" class="w-full py-3 px-6 rounded-xl font-bold bg-red-500 text-white hover:bg-red-600 transition-colors">⏹️ Stop Signing</button>
-                        <button id="clear-btn" class="w-full py-3 px-6 rounded-xl font-bold bg-blue-500 text-white hover:bg-blue-600 transition-colors">🗑️ Clear Text</button>
-                    </div>
-                    <div class="mt-4 text-sm text-gray-600">
-                        <p>💡 <strong>Tips for better recognition:</strong></p>
-                        <ul class="list-disc list-inside mt-2">
-                            <li>Ensure good lighting on your hands and face</li>
-                            <li>Keep your hands within the camera view</li>
-                            <li>Make clear, distinct signs</li>
-                            <li>Allow the system to capture complete gestures</li>
-                        </ul>
+                        <button id="clear-btn" class="w-full py-3 px-6 rounded-xl font-bold bg-blue-500 text-white hover:bg-blue-600 transition-colors">🗑️ Clear</button>
                     </div>
                 </div>
 
@@ -57,7 +50,8 @@
                 </div>
             </div>
 
-            <div class="space-y-6">
+            <!-- RIGHT COLUMN: Output & Status -->
+            <div id="output-column" class="space-y-6 lg:col-span-1">
                 <h2 class="text-2xl font-semibold">Translation Output</h2>
                 
                 <div id="status-display" class="status-box">
@@ -71,34 +65,38 @@
                     </div>
                 </div>
                 
-                <div>
-                    <div class="flex justify-between items-center mb-2">
-                        <h3 class="text-lg font-semibold">Detected Sentence</h3>
-                        <span id="word-count" class="text-sm text-gray-500">0 words</span>
-                    </div>
-                    <textarea id="detected-text" class="w-full p-4 rounded-xl border border-gray-300 bg-white resize-none" rows="5" readonly placeholder="Your translated text will appear here..."></textarea>
-                </div>
-                
-                <div class="bg-yellow-50 p-4 rounded-xl">
-                    <h4 class="font-semibold mb-2">Recent Signs</h4>
-                    <div id="recent-signs" class="text-sm text-gray-600">
+                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <h4 class="font-semibold mb-2 text-gray-700">Detected Signs</h4>
+                    <div id="detected-signs" class="text-sm text-gray-600 min-h-[40px] flex flex-wrap gap-2">
                         No signs detected yet...
                     </div>
+                    <button id="construct-sentence-btn" class="w-full mt-4 py-2 px-4 rounded-lg font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors opacity-50 cursor-not-allowed" disabled>
+                        ✨ Construct Sentence
+                    </button>
+                </div>
+
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-lg font-semibold">Final Sentence</h3>
+                    </div>
+                    <textarea id="detected-text" class="w-full p-4 rounded-xl border border-gray-300 bg-gray-50 resize-none focus:bg-white transition-colors" rows="5" readonly placeholder="Click 'Construct Sentence' to generate text..."></textarea>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+       <!-- Load MediaPipe Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    
-    <!-- Load modules in correct order -->
-    <script src="js/config.js"></script>
-    <script src="js/websocket-manager.js"></script>
-    <script src="js/ui-manager.js"></script>
-    <script src="js/mediapipe-manager.js"></script>
-    <script src="js/translation-manager.js"></script>
-    <script src="js/animation-manager.js"></script>
-    <script src="js/app.js"></script>
+
+    <!-- Load App Logic -->
+    <script src="/js/config.js"></script>
+    <script src="/js/websocket-manager.js"></script>
+    <script src="/js/ui-manager.js"></script>
+    <script src="/js/mediapipe-manager.js"></script>
+    <script src="/js/translation-manager.js"></script>
+    <script src="/js/animation-manager.js"></script>
+    <script src="/js/app.js"></script>
 </body>
 </html>

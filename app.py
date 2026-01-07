@@ -1,9 +1,10 @@
 import os
+import sys
 import time
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 import numpy as np
-from collections import deque, Counter
+import uuid
 
 # --- CONFIGURATION ---
 N_FRAMES = 30
@@ -29,31 +30,47 @@ user_sessions = {}
 # --- INITIALIZE MODELS ---
 def initialize_models():
     global recognizer, generator
+    
+    # 1. Initialize Recognizer (Standard TF Version)
     try:
-        print("Initializing ISL Recognizer...")
+        print("="*50)
+        print("Initializing ISL Recognizer (Standard TensorFlow)...")
+        print(f"Model Path: {MODEL_PATH}")
+        print(f"Labels Path: {CLASS_NAMES_PATH}")
+        
         from isl_recognizer import ISLRecognizer
         recognizer = ISLRecognizer(MODEL_PATH, CLASS_NAMES_PATH)
-        print("ISL Recognizer initialized")
-        
-        # Initialize animation generator if available
-        try:
-            from isl_generator import ISLGenerator
-            generator = ISLGenerator(GLOSS_MAP_PATH, OUTPUT_DIR)
-            print("ISL Generator initialized")
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-        except ImportError:
-            print("ISL Generator not available - animation features disabled")
-        except Exception as e:
-            print(f"Error initializing generator: {e}")
-            
+        print("✅ ISL Recognizer initialized (Standard TensorFlow)")
+    except ImportError as e:
+        print(f"❌ ERROR loading Recognizer: {e}")
+        print("Standard TensorFlow library might be missing.")
+        print("Please run: pip install tensorflow")
+        recognizer = None
     except Exception as e:
-        print(f"Error initializing models: {e}")
+        print(f"❌ CRITICAL ERROR loading Recognizer: {e}")
+        recognizer = None
+    
+    # 2. Initialize Generator
+    try:
+        print("Initializing ISL Generator...")
+        from isl_generator import ISLGenerator
+        generator = ISLGenerator(GLOSS_MAP_PATH, OUTPUT_DIR)
+        print("✅ ISL Generator initialized")
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+    except Exception as e:
+        print(f"⚠️  ERROR loading Generator: {e}")
+        print("Recognition might work, but Text-to-ISL will fail.")
+        generator = None
+
+    # CRITICAL FIX: Stop server if recognizer fails
+    if recognizer is None:
+        print("!!! SERVER HALTED !!!")
+        print("ISL Recognizer failed to load.")
+        print("Please install 'tensorflow' to fix errors.")
+        print("Server will NOT start.")
+        sys.exit(1) # Force stop to avoid infinite errors
 
 initialize_models()
-
-# --- UTILITY FUNCTIONS ---
-def isl_to_english_sentence(history_of_signs):
-    return " ".join(history_of_signs) if history_of_signs else ""
 
 # --- ROUTES ---
 @app.route("/")
@@ -72,44 +89,26 @@ def serve_css(filename):
 def serve_static(filename):
     return send_from_directory('static', filename)
 
-@app.route('/animations/<path:filename>')
-def serve_animations(filename):
-    return send_from_directory(OUTPUT_DIR, filename)
-
-@app.route("/.well-known/appspecific/com.chrome.devtools.json")
-def chrome_devtools():
-    """Handle Chrome DevTools request"""
-    return jsonify({"message": "Chrome DevTools endpoint"})
-
 @app.route("/api/predict_sequence", methods=["POST"])
 def http_predict_sequence():
     if not recognizer:
-        return jsonify({"error": "Model not initialized"}), 500
+        return jsonify({"error": "Recognizer not initialized (Standard TF). Install tensorflow."}), 503
     
     try:
         data = request.get_json()
-        
-        # --- NEW: Catch conversion errors specifically ---
-        try:
-            sequence = np.array(data.get("sequence", []), dtype=np.float32)
-        except ValueError:
-            return jsonify({"error": "Invalid data format: Sequence must be numbers"}), 400
-        # -------------------------------------------------
-
+        sequence = np.array(data.get("sequence", []), dtype=np.float32)
         history_of_signs = data.get("history", [])
 
         if sequence.shape != (N_FRAMES, 144):
             return jsonify({"error": f"Invalid sequence shape: {sequence.shape}"}), 400
 
-        # Use smoothed prediction like OpenCV code
         smoothed_label, confidence = recognizer.predict_sequence_smoothed(sequence)
         
-        # Apply confidence threshold
         if confidence > MIN_CONFIDENCE:
             if not history_of_signs or history_of_signs[-1] != smoothed_label:
                 history_of_signs.append(smoothed_label)
         
-        sentence = isl_to_english_sentence(history_of_signs)
+        sentence = " ".join(history_of_signs) if history_of_signs else ""
         return jsonify({
             "label": smoothed_label,
             "confidence": float(confidence),
@@ -145,18 +144,6 @@ def http_generate_animation():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/api/status")
-def status():
-    return jsonify({
-        "status": "running",
-        "recognizer_loaded": recognizer is not None,
-        "generator_loaded": generator is not None
-    })
-
-@app.route("/api/test")
-def test_endpoint():
-    return jsonify({"message": "Server running", "models_loaded": recognizer is not None})
-
 # --- SOCKETIO EVENTS ---
 @socketio.on('connect')
 def handle_connect():
@@ -165,8 +152,8 @@ def handle_connect():
         'history': [], 
         'last_prediction_time': 0
     }
-    emit('connection_response', {'status': 'connected'})
     print(f"Client connected: {client_id}")
+    emit('connection_response', {'status': 'connected'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -177,17 +164,12 @@ def handle_disconnect():
 @socketio.on('predict_sequence')
 def handle_prediction(data):
     client_id = request.sid
+    
     if client_id not in user_sessions or not recognizer:
         emit('prediction_error', {'error': 'Session or model not available'})
         return
     
     try:
-        # Throttle predictions
-        current_time = time.time()
-        if current_time - user_sessions[client_id]['last_prediction_time'] < 0.3:
-            return
-        user_sessions[client_id]['last_prediction_time'] = current_time
-        
         sequence = np.array(data.get('sequence', []), dtype=np.float32)
         history = user_sessions[client_id]['history']
 
@@ -195,17 +177,17 @@ def handle_prediction(data):
             emit('prediction_error', {'error': f'Invalid sequence shape: {sequence.shape}'})
             return
         
-        # Use smoothed prediction like OpenCV code
         smoothed_label, confidence = recognizer.predict_sequence_smoothed(sequence)
         
-        # Apply confidence threshold
+        print(f"📊 Prediction result: {smoothed_label} ({confidence:.3f})")
+        
         if confidence > MIN_CONFIDENCE:
             if not history or history[-1] != smoothed_label:
                 history.append(smoothed_label)
                 if len(history) > 20:
                     history.pop(0)
         
-        sentence = isl_to_english_sentence(history)
+        sentence = " ".join(history) if history else ""
         emit('prediction_result', {
             'label': smoothed_label,
             'confidence': float(confidence),
@@ -213,6 +195,7 @@ def handle_prediction(data):
             'history': history.copy()
         })
     except Exception as e:
+        print(f"❌ Prediction Error: {e}")
         emit('prediction_error', {'error': str(e)})
 
 @socketio.on('generate_animation')
@@ -241,8 +224,11 @@ def handle_generate_animation(data):
             })
             print(f"Animation generated: {video_url}")
         else:
+            print(f"Error: Video generation failed or file not found.")
             emit('animation_error', {'error': 'Could not generate animation'})
+            
     except Exception as e:
+        print(f"Server Exception: {e}")
         emit('animation_error', {'error': str(e)})
 
 @socketio.on('clear_history')
@@ -250,7 +236,7 @@ def handle_clear_history():
     client_id = request.sid
     if client_id in user_sessions:
         user_sessions[client_id]['history'] = []
-        recognizer.clear_buffer()
+        if recognizer: recognizer.clear_buffer()
         
     emit('prediction_result', {
         'label': '',
@@ -259,10 +245,12 @@ def handle_clear_history():
         'history': []
     })
 
-# --- MAIN ---
+@socketio.on('clear_prediction_buffer')
+def handle_clear_prediction_buffer():
+    """Clears the smoothing buffer when transitioning to a new sign"""
+    if recognizer:
+        recognizer.clear_buffer()
+
 if __name__ == "__main__":
     print("Starting ISL Recognition Server...")
-    print(f"Model: {os.path.basename(MODEL_PATH)}")
-    print(f"Classes: {len(np.load(CLASS_NAMES_PATH))} alphabets")
-    print(f"Animation generator: {'Available' if generator else 'Not available'}")
     socketio.run(app, debug=True, host='0.0.0.0', port=5000)
