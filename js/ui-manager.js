@@ -137,15 +137,41 @@ class UIManager {
     }
 
     showAnimationVideo(url) {
-        const video = this.elements[ELEMENTS.ANIMATION_VIDEO];
-        video.src = url;
-        video.onloadeddata = () => {
-            video.classList.remove("hidden");
-            this.elements[ELEMENTS.ANIMATION_TEXT_PLACEHOLDER].classList.add("hidden");
-            video.play();
-        };
-        video.onerror = () => this.showAnimationError("Failed to load animation");
-    }
+    const video = this.elements[ELEMENTS.ANIMATION_VIDEO];
+    const placeholder = this.elements[ELEMENTS.ANIMATION_TEXT_PLACEHOLDER];
+
+    console.log("🎬 Loading animation:", url);
+
+    // Force reload even if same filename is generated twice
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+
+    // Cache-buster (important on cloud)
+    const bustUrl = url + "?t=" + new Date().getTime();
+    video.src = bustUrl;
+
+    // Show video as soon as metadata is ready
+    video.onloadedmetadata = () => {
+        console.log("✅ Video metadata loaded");
+        video.classList.remove("hidden");
+        placeholder.classList.add("hidden");
+        video.play().catch(() => {});
+    };
+
+    // Fallback if metadata is slow
+    video.oncanplay = () => {
+        console.log("▶️ Video can play");
+        video.classList.remove("hidden");
+        placeholder.classList.add("hidden");
+    };
+
+    video.onerror = () => {
+        console.error("❌ Video failed to load:", video.src);
+        this.showAnimationError("Failed to load animation file.");
+    };
+}
+
 
     showAnimationError(message) {
         this.elements[ELEMENTS.ANIMATION_VIDEO].classList.add("hidden");

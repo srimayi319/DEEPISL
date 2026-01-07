@@ -44,7 +44,8 @@
                     <textarea id="text-input" class="w-full p-4 rounded-xl border border-gray-300 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" rows="4" placeholder="e.g., What is your name?"></textarea>
                     <button id="generate-btn" class="w-full mt-4 py-3 px-6 rounded-xl font-bold bg-blue-500 text-white hover:bg-blue-600 transition-colors">✨ Generate Animation</button>
                     <div id="animation-placeholder" class="video-container mt-4">
-                        <video id="animation-video" class="w-full h-full hidden" autoplay loop controls></video>
+                        <!-- UPDATED LINE BELOW (added playsinline) -->
+                        <video id="animation-video" class="w-full h-full hidden" controls autoplay loop playsinline></video>
                         <p id="animation-text-placeholder" class="text-gray-400 absolute">Your animation will appear here.</p>
                     </div>
                 </div>
@@ -64,6 +65,8 @@
                         <div id="confidence-text" class="text-xs mt-1">Confidence: 0%</div>
                     </div>
                 </div>
+                
+                <!-- REMOVED DUPLICATE VIDEO TAG FROM HERE -->
                 
                 <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                     <h4 class="font-semibold mb-2 text-gray-700">Detected Signs</h4>
