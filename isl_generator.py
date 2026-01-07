@@ -7,6 +7,8 @@ from collections import defaultdict
 import mediapipe as mp
 import spacy
 import re
+import subprocess  # <--- REQUIRED FOR THE NUCLEAR FIX
+import traceback
 
 # Load spaCy English model
 try:
@@ -287,22 +289,31 @@ class ISLGenerator:
             if not video_segments:
                 print("No pose data collected")
                 return None
+            
             os.makedirs(self.data_dir, exist_ok=True)
             final_name = f"animation_{uuid4().hex[:8]}.mp4"
             final_path = os.path.join(self.data_dir, final_name)
 
-            # Encoder setup
+            # ========================================================
+            # ⭐ NUKE FIX: Use FFmpeg Subprocess for H.264
+            # ========================================================
+            # This creates a file, uses system ffmpeg to re-encode it to h264 (avc1).
+            
+            # 1. Generate raw MP4 (might be mp4v, but we don't care)
+            #    We save it to a temp location to avoid overwriting permissions too early
+            temp_path = final_path + ".tmp"
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
+            video_out = cv2.VideoWriter(temp_path, fourcc, self.fps, self.img_size)
+            
             if not video_out.isOpened():
                 print("mp4v failed, trying XVID...")
-                final_path = final_path.replace(".mp4", ".avi")
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
+                video_out = cv2.VideoWriter(temp_path, fourcc, self.fps, self.img_size)
 
             if not video_out.isOpened():
                 raise RuntimeError("❌ No supported video encoder found on this system.")
 
+            # 2. Write frames
             for label, frames in video_segments:
                 for frame_data in frames:
                     canvas = np.full((self.img_size[1], self.img_size[0], 3), 255, dtype=np.uint8)
@@ -312,7 +323,43 @@ class ISLGenerator:
                     video_out.write(canvas)
 
             video_out.release()
-            print(f"Video saved at: {final_path}")
+            print(f"Raw video temp saved at: {temp_path}")
+
+            # 3. Re-encode with FFmpeg (The Golden Fix)
+            #    This converts mp4v -> h264 (avc1) without needing ffmpeg module in python
+            try:
+                # Check if ffmpeg is available in PATH
+                subprocess.run(['which', 'ffmpeg'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                print(f"✅ FFmpeg found. Re-encoding {temp_path} -> {final_name}...")
+                
+                cmd = [
+                    'ffmpeg', 
+                    '-y', '-i', temp_path,      # Input file
+                    '-vcodec', 'libx264',       # Encode to H.264
+                    '-pix_fmt', 'yuv420p',     # Standard pixel format
+                    '-strict', 'experimental',    # Allow this setup
+                    '-acodec', 'aac',         # Audio (none here, but standard)
+                    '-b:a', '0',                # No audio
+                    '-vf', 'pad=width=ih:oh:ih:ow=ih:oh:ih', # Ensure even dimensions
+                    '-movflags', '+faststart',    # Fast start for streaming
+                    final_path
+                ]
+                
+                process = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                
+                # Remove temp file
+                os.remove(temp_path)
+                print(f"✅ FFmpeg re-encoding success. Final file: {final_path}")
+
+            except subprocess.CalledProcessError:
+                # If ffmpeg is missing, just rename the temp file and hope for the best
+                print("⚠️ FFmpeg not found. Using raw file (might not play in Chrome).")
+                os.rename(temp_path, final_path)
+            except Exception as e:
+                print(f"⚠️ FFmpeg failed, using raw file: {e}")
+                os.rename(temp_path, final_path)
+            # ========================================================
 
             # --- CRITICAL RENDER FIX ---
             try:
@@ -326,6 +373,5 @@ class ISLGenerator:
 
         except Exception as e:
             print(f"Error generating video: {e}")
-            import traceback
             traceback.print_exc()
             return None
