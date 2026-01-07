@@ -19,14 +19,12 @@ GLOSS_MAP_PATH = os.path.join(ROOT_DIR, "gloss_map.json")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 
 # --- FLASK SETUP ---
-# Fix 1: Disable Flask's static handler to prevent collisions
 app = Flask(
     __name__, 
     static_folder=None, 
     template_folder=os.path.join(ROOT_DIR, 'templates')
 )
 
-# Force correct MIME types
 mimetypes.add_type('video/mp4', '.mp4')
 
 app.config['SECRET_KEY'] = 'your-secret-key-here'
@@ -63,7 +61,6 @@ def initialize_models():
 
     if recognizer is None:
         print("!!! SERVER HALTED !!!")
-        print("ISL Recognizer failed to load.")
         sys.exit(1)
 
 initialize_models()
@@ -74,7 +71,6 @@ initialize_models()
 def index():
     return render_template("index.html")
 
-# Manual routes for CSS/JS since we disabled static_folder
 @app.route('/js/<path:filename>')
 def serve_js(filename):
     return send_from_directory(os.path.join(ROOT_DIR, 'js'), filename)
@@ -83,7 +79,6 @@ def serve_js(filename):
 def serve_css(filename):
     return send_from_directory(os.path.join(ROOT_DIR, 'css'), filename)
 
-# Fix 2: New route path to avoid collision
 @app.route('/animations/<path:filename>')
 def serve_animations(filename):
     target_path = os.path.join(OUTPUT_DIR, filename)
@@ -92,7 +87,6 @@ def serve_animations(filename):
     print(f"🔍 [VIDEO REQUEST] Path: {target_path}")
     
     if os.path.exists(target_path):
-        # Fix 3: Explicit mimetype for safety
         return send_from_directory(OUTPUT_DIR, filename, mimetype="video/mp4")
     else:
         print(f"❌ [VIDEO 404] File not found: {target_path}")
@@ -111,6 +105,7 @@ def http_predict_sequence():
         if sequence.shape != (N_FRAMES, 144):
             return jsonify({"error": f"Invalid sequence shape: {sequence.shape}"}), 400
 
+        # FIX 1: Corrected function name and variable
         smoothed_label, confidence = recognizer.predict_sequence_smoothed(sequence)
         
         if confidence > MIN_CONFIDENCE:
@@ -143,7 +138,6 @@ def http_generate_animation():
         
         if video_path and os.path.exists(video_path):
             filename = os.path.basename(video_path)
-            # Fix 4: Updated URL path
             video_url = f"/animations/{filename}"
             
             print(f"Video saved at: {video_path}")
@@ -180,7 +174,8 @@ def handle_disconnect():
 
 @socketio.on('predict_sequence')
 def handle_prediction(data):
-    client_id = request_sid
+    # FIX 2: Corrected request_sid to request.sid
+    client_id = request.sid
     
     if client_id not in user_sessions or not recognizer:
         emit('prediction_error', {'error': 'Session or model not available'})
@@ -194,6 +189,7 @@ def handle_prediction(data):
             emit('prediction_error', {'error': f'Invalid sequence shape: {sequence.shape}'})
             return
         
+        # FIX 3: Corrected function name
         smoothed_label, confidence = recognizer.predict_sequence_smoothed(sequence)
         
         if confidence > MIN_CONFIDENCE:
@@ -230,7 +226,6 @@ def handle_generate_animation(data):
         
         if video_path and os.path.exists(video_path):
             filename = os.path.basename(video_path)
-            # Fix 4: Updated URL path for Socket
             video_url = f"/animations/{filename}"
             
             emit('animation_result', {
@@ -266,7 +261,6 @@ def handle_clear_prediction_buffer():
     if recognizer:
         recognizer.clear_buffer()
 
-# Fix 5: Correct Port for Render
 if __name__ == "__main__":
     print("Starting ISL Recognition Server...")
     port = int(os.environ.get("PORT", 10000))
