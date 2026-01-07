@@ -290,6 +290,8 @@ class ISLGenerator:
 
     def generate_video_from_text(self, text: str) -> str:
         """Generate video from text using ISL grammar processing with LABELS."""
+        print(f"🎬 Starting video generation for: '{text}'")
+        
         tokens = self.text_to_gloss(text)
         
         if not tokens:
@@ -333,44 +335,70 @@ class ISLGenerator:
             return None
 
         os.makedirs(self.data_dir, exist_ok=True)
-        final_name = f"animation_{uuid4().hex[:8]}.mp4"
+        
+        # CRITICAL FIX: Use WebM format like the working version
+        final_name = f"animation_{uuid4().hex[:8]}.webm"
         final_path = os.path.join(self.data_dir, final_name)
         
-        # --- CODEC SELECTION ---
-        # 'mp4v' (Motion JPEG) is the most compatible codec across Windows, Mac, and Linux.
-        # 'avc1' (H264) often requires specific FFmpeg installations or builds of OpenCV.
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # CRITICAL FIX: Use VP80 codec like the working version
+        fourcc = cv2.VideoWriter_fourcc(*'vp80')
+        
+        print(f"📁 Creating video: {final_path}")
+        print(f"🎞️  Frames per second: {self.fps}")
+        print(f"🖼️  Frame size: {self.img_size}")
+        print(f"🔢 Total segments: {len(video_segments)}")
         
         try:
             video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
             
             if not video_out.isOpened():
-                print("❌ Failed to open VideoWriter with mp4v. Trying fallback...")
+                print("❌ Failed to open VideoWriter with vp80. Trying XVID...")
                 fourcc_fallback = cv2.VideoWriter_fourcc(*'XVID')
-                video_out = cv2.VideoWriter(final_path, fourcc_fallback, self.fps, self.img_size)
+                final_path_fallback = final_path.replace('.webm', '.avi')
+                video_out = cv2.VideoWriter(final_path_fallback, fourcc_fallback, self.fps, self.img_size)
+                final_path = final_path_fallback
 
+            if not video_out.isOpened():
+                print("❌ All codecs failed!")
+                return None
+
+            total_frames = 0
             # Loop through segments
             for label, frames in video_segments:
-                for frame_data in frames:
+                print(f"  📝 Processing '{label}' with {len(frames)} frames")
+                for frame_idx, frame_data in enumerate(frames):
                     # Create a fresh white canvas for every frame
                     canvas = np.full((self.img_size[1], self.img_size[0], 3), 255, dtype=np.uint8)
-                    canvas[:] = BG_COLOR
                     
                     # Draw skeleton (with safety checks)
                     try:
                         self._draw_skeleton_on_frame(canvas, frame_data)
                     except Exception as e:
-                        print(f"Error drawing frame for {label}: {e}")
+                        print(f"    ⚠️  Error drawing frame {frame_idx} for {label}: {e}")
                     
                     # Draw Label
                     self._draw_label(canvas, label)
                     
                     video_out.write(canvas)
+                    total_frames += 1
             
             video_out.release()
-            print(f"✅ Video successfully saved at: {final_path}")
-            return final_path
             
+            # Verify the file was created
+            if os.path.exists(final_path):
+                file_size = os.path.getsize(final_path) / 1024  # KB
+                print(f"✅ Video successfully created!")
+                print(f"   📁 Path: {final_path}")
+                print(f"   🎞️  Total frames: {total_frames}")
+                print(f"   📏 File size: {file_size:.1f} KB")
+                print(f"   🔗 URL will be: /static/animations/{os.path.basename(final_path)}")
+                return final_path
+            else:
+                print("❌ Video file was not created!")
+                return None
+                
         except Exception as e:
             print(f"❌ Fatal Error generating video: {e}")
+            import traceback
+            traceback.print_exc()
             return None
