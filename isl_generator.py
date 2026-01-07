@@ -365,15 +365,18 @@ class ISLGenerator:
         final_name = f"animation_{uuid4().hex[:8]}.mp4"
         final_path = os.path.join(self.data_dir, final_name)
         
-        # Use H264 codec
-        fourcc = cv2.VideoWriter_fourcc(*'H264')
-        
-        try:
+        # ✅ CLOUD-SAFE VIDEO ENCODER (Render compatible)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
+
+        if not video_out.isOpened():
+            print("mp4v failed, trying XVID + AVI fallback...")
+            final_path = final_path.replace(".mp4", ".avi")
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
             video_out = cv2.VideoWriter(final_path, fourcc, self.fps, self.img_size)
-            if not video_out.isOpened():
-                # Fallback if H.264 is not supported by your OpenCV build
-                fourcc_fallback = cv2.VideoWriter_fourcc(*'mp4v')
-                video_out = cv2.VideoWriter(final_path, fourcc_fallback, self.fps, self.img_size)
+
+        if not video_out.isOpened():
+            raise RuntimeError("❌ No supported video encoder found on this system.")
 
             # CHANGE: Loop through segments instead of flat frames
             for label, frames in video_segments:
