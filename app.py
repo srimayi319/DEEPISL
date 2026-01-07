@@ -85,7 +85,7 @@ initialize_models()
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("template/index.html")
 
 @app.route('/js/<path:filename>')
 def serve_js(filename):
