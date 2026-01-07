@@ -19,16 +19,14 @@ GLOSS_MAP_PATH = os.path.join(ROOT_DIR, "gloss_map.json")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 
 # --- FLASK SETUP ---
-# NOTE: I kept template_folder=ROOT_DIR and the path "template/index.html" 
-# as per your code structure.
+# Fix 1: Disable Flask's static handler to prevent collisions
 app = Flask(
     __name__, 
-    static_folder=os.path.join(ROOT_DIR, 'static'),
+    static_folder=None, 
     template_folder=os.path.join(ROOT_DIR, 'templates')
 )
 
-
-# Force correct MIME types for video playback
+# Force correct MIME types
 mimetypes.add_type('video/mp4', '.mp4')
 
 app.config['SECRET_KEY'] = 'your-secret-key-here'
@@ -76,6 +74,7 @@ initialize_models()
 def index():
     return render_template("index.html")
 
+# Manual routes for CSS/JS since we disabled static_folder
 @app.route('/js/<path:filename>')
 def serve_js(filename):
     return send_from_directory(os.path.join(ROOT_DIR, 'js'), filename)
@@ -84,44 +83,20 @@ def serve_js(filename):
 def serve_css(filename):
     return send_from_directory(os.path.join(ROOT_DIR, 'css'), filename)
 
-@app.route('/static/animations/<path:filename>')
+# Fix 2: New route path to avoid collision
+@app.route('/animations/<path:filename>')
 def serve_animations(filename):
-    """
-    Serves animation files.
-    Includes forensic logging to debug path mismatches on Render.
-    """
     target_path = os.path.join(OUTPUT_DIR, filename)
     
-    # --- DIAGNOSTIC LOGS ---
-    print(f"🔍 [VIDEO REQUEST] Attempting to serve: {filename}")
-    print(f"🔍 [VIDEO REQUEST] Absolute path constructed: {target_path}")
-    print(f"🔍 [VIDEO REQUEST] File exists on disk? {os.path.exists(target_path)}")
-    # -----------------------
-
+    print(f"🔍 [VIDEO REQUEST] Serving: {filename}")
+    print(f"🔍 [VIDEO REQUEST] Path: {target_path}")
+    
     if os.path.exists(target_path):
-        try:
-            return send_from_directory(OUTPUT_DIR, filename)
-        except Exception as e:
-            print(f"❌ [VIDEO ERROR] Permission or I/O error: {e}")
-            return f"Server error reading file: {e}", 500
-
+        # Fix 3: Explicit mimetype for safety
+        return send_from_directory(OUTPUT_DIR, filename, mimetype="video/mp4")
     else:
-        # --- CRITICAL DEBUGGING ---
-        print(f"⚠️ [VIDEO 404] File not found! Listing contents of {OUTPUT_DIR}:")
-        try:
-            files = os.listdir(OUTPUT_DIR)
-            if not files:
-                print("   (Folder is completely empty!)")
-            else:
-                for f in files:
-                    print(f"   - {f}")
-        except FileNotFoundError:
-            print(f"   ERROR: The directory {OUTPUT_DIR} does not even exist!")
-        except Exception as e:
-            print(f"   ERROR: Could not list directory: {e}")
-        # -------------------------
-
-        return "Animation file not found. Check server logs for details.", 404
+        print(f"❌ [VIDEO 404] File not found: {target_path}")
+        return "Animation file not found", 404
 
 @app.route("/api/predict_sequence", methods=["POST"])
 def http_predict_sequence():
@@ -168,7 +143,8 @@ def http_generate_animation():
         
         if video_path and os.path.exists(video_path):
             filename = os.path.basename(video_path)
-            video_url = f"/static/animations/{filename}"
+            # Fix 4: Updated URL path
+            video_url = f"/animations/{filename}"
             
             print(f"Video saved at: {video_path}")
             print(f"Returning URL: {video_url}")
@@ -204,7 +180,7 @@ def handle_disconnect():
 
 @socketio.on('predict_sequence')
 def handle_prediction(data):
-    client_id = request.sid
+    client_id = request_sid
     
     if client_id not in user_sessions or not recognizer:
         emit('prediction_error', {'error': 'Session or model not available'})
@@ -254,7 +230,8 @@ def handle_generate_animation(data):
         
         if video_path and os.path.exists(video_path):
             filename = os.path.basename(video_path)
-            video_url = f"/static/animations/{filename}"
+            # Fix 4: Updated URL path for Socket
+            video_url = f"/animations/{filename}"
             
             emit('animation_result', {
                 'video_url': video_url, 
@@ -289,6 +266,8 @@ def handle_clear_prediction_buffer():
     if recognizer:
         recognizer.clear_buffer()
 
+# Fix 5: Correct Port for Render
 if __name__ == "__main__":
     print("Starting ISL Recognition Server...")
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    socketio.run(app, debug=True, host="0.0.0.0", port=port)
