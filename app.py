@@ -22,8 +22,8 @@ OUTPUT_DIR = os.path.join(ROOT_DIR, "static", "animations")
 # NOTE: I kept template_folder=ROOT_DIR and the path "template/index.html" 
 # as per your code structure.
 app = Flask(
-    __name__, 
-    static_folder=os.path.join(ROOT_DIR, 'static'),
+    __name__,
+    static_folder=None,   # ❌ disable Flask static system
     template_folder=os.path.join(ROOT_DIR, 'templates')
 )
 
