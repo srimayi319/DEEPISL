@@ -54,9 +54,10 @@ def initialize_models():
     try:
         print("Initializing ISL Generator...")
         from isl_generator import ISLGenerator
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
         generator = ISLGenerator(GLOSS_MAP_PATH, OUTPUT_DIR)
         print("✅ ISL Generator initialized")
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
     except Exception as e:
         print(f"⚠️  ERROR loading Generator: {e}")
         print("Recognition might work, but Text-to-ISL will fail.")
