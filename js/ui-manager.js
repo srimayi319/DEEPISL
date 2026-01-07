@@ -7,6 +7,7 @@ class UIManager {
     }
 
     initializeElements() {
+        // Assuming ELEMENTS is imported or defined globally in config.js
         Object.values(ELEMENTS).forEach(id => {
             this.elements[id] = document.getElementById(id);
         });
@@ -137,41 +138,68 @@ class UIManager {
     }
 
     showAnimationVideo(url) {
-    const video = this.elements[ELEMENTS.ANIMATION_VIDEO];
-    const placeholder = this.elements[ELEMENTS.ANIMATION_TEXT_PLACEHOLDER];
+        const video = this.elements[ELEMENTS.ANIMATION_VIDEO];
+        const placeholder = this.elements[ELEMENTS.ANIMATION_TEXT_PLACEHOLDER];
 
-    console.log("🎬 Loading animation:", url);
+        console.log("🎬 Requesting animation:", url);
 
-    // Force reload even if same filename is generated twice
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
+        // 1. Reset video state
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
 
-    // Cache-buster (important on cloud)
-    const bustUrl = url + "?t=" + new Date().getTime();
-    video.src = bustUrl;
+        // 2. Set source with cache buster to force re-download on cloud
+        const bustUrl = url + "?t=" + new Date().getTime();
+        video.src = bustUrl;
 
-    // Show video as soon as metadata is ready
-    video.onloadedmetadata = () => {
-        console.log("✅ Video metadata loaded");
+        // 3. Success: Metadata Loaded
+        video.onloadedmetadata = () => {
+            console.log("✅ Video metadata loaded");
+            this._revealVideo();
+            video.play().catch(e => console.warn("Autoplay blocked", e));
+        };
+
+        // 4. Success: Can Play
+        video.oncanplay = () => {
+            console.log("▶️ Video data ready");
+            this._revealVideo();
+        };
+
+        // 5. Error Handling with Detailed Codes
+        video.onerror = () => {
+            const error = video.error;
+            let errorMessage = "Unknown error";
+            
+            // Translate browser error codes to readable text
+            switch (error.code) {
+                case error.MEDIA_ERR_ABORTED:
+                    errorMessage = "Download aborted.";
+                    break;
+                case error.MEDIA_ERR_NETWORK:
+                    errorMessage = "Network error (File exists but server refused connection - Check Permissions)";
+                    break;
+                case error.MEDIA_ERR_DECODE:
+                    errorMessage = "Decode error (Corrupt video or wrong MIME type)";
+                    break;
+                case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                    errorMessage = "Source not supported (404 Not Found or Format issue)";
+                    break;
+            }
+
+            console.error("❌ Video Error Code:", error.code);
+            console.error("❌ Reason:", errorMessage);
+            console.error("❌ URL Attempted:", video.src);
+
+            this.showAnimationError(errorMessage);
+        };
+    }
+
+    _revealVideo() {
+        const video = this.elements[ELEMENTS.ANIMATION_VIDEO];
+        const placeholder = this.elements[ELEMENTS.ANIMATION_TEXT_PLACEHOLDER];
         video.classList.remove("hidden");
         placeholder.classList.add("hidden");
-        video.play().catch(() => {});
-    };
-
-    // Fallback if metadata is slow
-    video.oncanplay = () => {
-        console.log("▶️ Video can play");
-        video.classList.remove("hidden");
-        placeholder.classList.add("hidden");
-    };
-
-    video.onerror = () => {
-        console.error("❌ Video failed to load:", video.src);
-        this.showAnimationError("Failed to load animation file.");
-    };
-}
-
+    }
 
     showAnimationError(message) {
         this.elements[ELEMENTS.ANIMATION_VIDEO].classList.add("hidden");
