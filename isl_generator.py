@@ -315,7 +315,6 @@ class ISLGenerator:
             print(f"Video saved at: {final_path}")
 
             # --- CRITICAL RENDER FIX ---
-            # Force the file to be readable by the web server (Permissions 644)
             try:
                 os.chmod(final_path, 0o644)
                 print(f"✅ Permissions set for {final_name}")
